@@ -156,8 +156,8 @@
               <v-select
                 :reduce="label => label.value"
                 placeholder="Choose Seller"
-                v-model="Filter_Client"
-                :options="sellers.map(sellers => ({label: sellers.username, value: sellers.id}))"
+                v-model="Filter_seller"
+                :options="sellers.map(seller => ({label: seller.username, value: seller.id}))"
               />
             </b-form-group>
           </b-col>
@@ -199,7 +199,7 @@
           </b-col>
 
           <b-col md="6" sm="12">
-            <b-button @click="Get_Sales(serverParams.page)" variant="primary ripple m-1" size="sm" block>
+            <b-button @click="Get_Sales(1)" variant="primary ripple m-1" size="sm" block>
               <lucide-icon name="filter" />
               {{ $t("Filter") }}
             </b-button>
@@ -499,6 +499,10 @@ components: { DateRangePicker },
       let field = "";
       if (params[0].field == "client_name") {
         field = "client_id";
+      } else if (params[0].field == "warehouse_name") {
+        field = "warehouse_id";
+      } else if (params[0].field == "user_name") {
+        field = "user_id";
       } else {
         field = params[0].field;
       }
@@ -640,7 +644,8 @@ components: { DateRangePicker },
       this.Filter_Ref = "";
       this.Filter_warehouse = "";
       this.Filter_seller = "";
-      this.Get_Sales(this.serverParams.page);
+      this.serverParams.page = 1;
+      this.Get_Sales(1);
     },
 
     //------------------------------Formetted Numbers -------------------------\\
@@ -775,10 +780,14 @@ components: { DateRangePicker },
       const customerName = self.Filter_Client
         ? ((self.customers || []).find(c => c.id == self.Filter_Client) || {}).name || ''
         : '';
+      const sellerName = self.Filter_seller
+        ? ((self.sellers || []).find(s => s.id == self.Filter_seller) || {}).username || ''
+        : '';
       const filterItems = [];
       if (self.startDate && self.endDate) filterItems.push({ label: 'Date',      value: `${self.startDate}  —  ${self.endDate}` });
       if (warehouseName)                  filterItems.push({ label: 'Warehouse', value: warehouseName });
       if (customerName)                   filterItems.push({ label: 'Customer',  value: customerName });
+      if (sellerName)                     filterItems.push({ label: 'Seller',    value: sellerName });
       if (self.Filter_Ref)                filterItems.push({ label: 'Ref',       value: self.Filter_Ref });
       if (self.Filter_status)             filterItems.push({ label: 'Status',    value: self.Filter_status });
       if (self.Filter_Payment)            filterItems.push({ label: 'Payment',   value: self.Filter_Payment });
@@ -855,13 +864,24 @@ components: { DateRangePicker },
 
     //---------------------------------------- Set To Strings-------------------------\\
     setToStrings() {
-      // Simply replaces null values with strings=''
-      if (this.Filter_Client === null) {
+      // Simply replaces null or undefined values with strings=''
+      if (this.Filter_Client === null || this.Filter_Client === undefined) {
         this.Filter_Client = "";
-      }else if (this.Filter_warehouse === null) {
+      }
+      if (this.Filter_warehouse === null || this.Filter_warehouse === undefined) {
         this.Filter_warehouse = "";
-      }else if (this.Filter_seller === null) {
+      }
+      if (this.Filter_seller === null || this.Filter_seller === undefined) {
         this.Filter_seller = "";
+      }
+      if (this.Filter_Ref === null || this.Filter_Ref === undefined) {
+        this.Filter_Ref = "";
+      }
+      if (this.Filter_status === null || this.Filter_status === undefined) {
+        this.Filter_status = "";
+      }
+      if (this.Filter_Payment === null || this.Filter_Payment === undefined) {
+        this.Filter_Payment = "";
       }
     },
 
@@ -908,34 +928,35 @@ components: { DateRangePicker },
       NProgress.set(0.1);
       this.setToStrings();
       this.get_data_loaded();
+      this.serverParams.page = page;
       axios
         .get(
           "/report/sales?page=" +
             page +
             "&Ref=" +
-            this.Filter_Ref +
+            encodeURIComponent(this.Filter_Ref || "") +
             "&client_id=" +
-            this.Filter_Client +
+            encodeURIComponent(this.Filter_Client || "") +
             "&warehouse_id=" +
-            this.Filter_warehouse +
+            encodeURIComponent(this.Filter_warehouse || "") +
             "&user_id=" +
-            this.Filter_seller +
+            encodeURIComponent(this.Filter_seller || "") +
             "&statut=" +
-            this.Filter_status +
+            encodeURIComponent(this.Filter_status || "") +
             "&payment_statut=" +
-            this.Filter_Payment +
+            encodeURIComponent(this.Filter_Payment || "") +
             "&SortField=" +
             this.serverParams.sort.field +
             "&SortType=" +
             this.serverParams.sort.type +
             "&search=" +
-            this.search +
+            encodeURIComponent(this.search || "") +
             "&limit=" +
             this.limit +
             "&to=" +
-            this.endDate +
+            (this.endDate || "") +
             "&from=" +
-            this.startDate +
+            (this.startDate || "") +
             "&start_time=" +
             encodeURIComponent(this.start_time || "") +
             "&end_time=" +

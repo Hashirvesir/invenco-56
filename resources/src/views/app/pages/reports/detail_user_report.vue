@@ -3,6 +3,61 @@
     <breadcumb :page="$t('User_report')" :folder="$t('Reports')"/>
     <div v-if="isLoading" class="loading_page spinner spinner-primary mr-3"></div>
 
+    <!-- Date Range Filter & Quick Ranges -->
+    <b-row class="mb-3 align-items-center justify-content-center" v-if="!isLoading">
+      <b-col md="auto" class="text-center mb-2">
+        <b-button-group size="sm">
+          <b-button
+            :variant="activeRange === 'this_month' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('this_month')"
+          >
+            {{ $t('ThisMonth') || 'This Month' }}
+          </b-button>
+          <b-button
+            :variant="activeRange === 'last_month' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('last_month')"
+          >
+            {{ $t('LastMonth') || 'Last Month' }}
+          </b-button>
+          <b-button
+            :variant="activeRange === 'this_year' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('this_year')"
+          >
+            {{ $t('ThisYear') || 'This Year' }}
+          </b-button>
+          <b-button
+            :variant="activeRange === 'all' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('all')"
+          >
+            {{ $t('AllTime') || 'All Time' }}
+          </b-button>
+        </b-button-group>
+      </b-col>
+      <b-col md="auto" class="text-center mb-2">
+        <date-range-picker
+          v-model="dateRange"
+          :startDate="startDate"
+          :endDate="endDate"
+          :time-picker="false"
+          :autoApply="true"
+          :showDropdowns="true"
+          :opens="'right'"
+          :drops="'down'"
+          @update="Submit_filter_dateRange"
+          :locale-data="locale"
+        >
+          <template v-slot:input="picker" style="min-width: 250px;">
+            <span v-if="picker.startDate && picker.endDate">
+              {{ formatDateTime(picker.startDate) }} — {{ formatDateTime(picker.endDate) }}
+            </span>
+            <span v-else>
+              {{ $t('AllTime') || 'All Time' }}
+            </span>
+          </template>
+        </date-range-picker>
+      </b-col>
+    </b-row>
+
     <b-row v-if="!isLoading">
       <b-col md="12">
         <b-card class="card mb-30" header-bg-variant="transparent ">
@@ -482,14 +537,38 @@
 import { mapActions, mapGetters } from "vuex";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import DateRangePicker from "vue2-daterange-picker";
+import "vue2-daterange-picker/dist/vue2-daterange-picker.css";
+import moment from "moment";
 import {
   formatPriceDisplay as formatPriceDisplayHelper,
   getPriceFormatSetting
 } from "../../../../utils/priceFormat";
 
 export default {
+  components: { DateRangePicker },
   data() {
+    const startOfMonth = moment().startOf("month");
+    const endOfMonth = moment().endOf("month");
+
     return {
+      activeRange: "this_month",
+      startDate: startOfMonth.format("YYYY-MM-DD"),
+      endDate: endOfMonth.format("YYYY-MM-DD"),
+      dateRange: {
+        startDate: startOfMonth.toDate(),
+        endDate: endOfMonth.toDate()
+      },
+      locale: {
+        Label: "Apply",
+        cancelLabel: "Cancel",
+        weekLabel: "W",
+        customRangeLabel: "Custom Range",
+        daysOfWeek: moment.weekdaysMin(),
+        monthNames: moment.monthsShort(),
+        firstDay: 1,
+      },
+
       totalRows_quotations: "",
       totalRows_sales: "",
       totalRows_sales_return: "",
@@ -1705,6 +1784,59 @@ export default {
     },
 
 
+    formatDateTime(date) {
+      return date ? moment(date).format("YYYY-MM-DD") : "";
+    },
+
+    Submit_filter_dateRange() {
+      const start = this.dateRange.startDate ? moment(this.dateRange.startDate) : null;
+      const end   = this.dateRange.endDate   ? moment(this.dateRange.endDate)   : null;
+      if (start && end) {
+        this.startDate = start.format("YYYY-MM-DD");
+        this.endDate   = end.format("YYYY-MM-DD");
+      }
+      this.activeRange = "custom";
+      this.reloadAll(1);
+    },
+
+    setQuickRange(type) {
+      this.activeRange = type;
+      if (type === "this_month") {
+        const start = moment().startOf("month");
+        const end = moment().endOf("month");
+        this.startDate = start.format("YYYY-MM-DD");
+        this.endDate = end.format("YYYY-MM-DD");
+        this.dateRange = { startDate: start.toDate(), endDate: end.toDate() };
+      } else if (type === "last_month") {
+        const start = moment().subtract(1, "month").startOf("month");
+        const end = moment().subtract(1, "month").endOf("month");
+        this.startDate = start.format("YYYY-MM-DD");
+        this.endDate = end.format("YYYY-MM-DD");
+        this.dateRange = { startDate: start.toDate(), endDate: end.toDate() };
+      } else if (type === "this_year") {
+        const start = moment().startOf("year");
+        const end = moment().endOf("year");
+        this.startDate = start.format("YYYY-MM-DD");
+        this.endDate = end.format("YYYY-MM-DD");
+        this.dateRange = { startDate: start.toDate(), endDate: end.toDate() };
+      } else if (type === "all") {
+        this.startDate = "";
+        this.endDate = "";
+        this.dateRange = { startDate: "", endDate: "" };
+      }
+      this.reloadAll(1);
+    },
+
+    reloadAll(page = 1) {
+      this.Get_Sales(page);
+      this.Get_Purchases(page);
+      this.Get_Quotations(page);
+      this.Get_Sales_Return(page);
+      this.Get_Purchases_Return(page);
+      this.Get_Transfers(page);
+      this.Get_adjustments(page);
+    },
+
     //--------------------------- Event Page Change -------------\\
     PageChangeSales({ currentPage }) {
       if (this.sales_page !== currentPage) {
@@ -1728,28 +1860,31 @@ export default {
     //--------------------------- get_sales_by_user -------------\\
     Get_Sales(page) {
       axios
-        .get(
-          "/report/get_sales_by_user?page=" +
-            page +
-            "&limit=" +
-            this.limit_sales +
-            "&search=" +
-            this.search_sales +
-            "&id=" +
-            this.$route.params.id
-        )
+        .get("/report/get_sales_by_user", {
+          params: {
+            page: page,
+            limit: this.limit_sales,
+            search: this.search_sales,
+            id: this.$route.params.id,
+            from: this.startDate || "",
+            to: this.endDate || ""
+          }
+        })
         .then(response => {
           this.sales = response.data.sales;
           this.totalRows_sales = response.data.totalRows;
           this.rows_sales[0].children = this.sales;
+          this.isLoading = false;
         })
-        .catch(response => {});
+        .catch(response => {
+          this.isLoading = false;
+        });
     },
 
     //--------------------------- Event Page Change -------------\\
     PageChangePurchases({ currentPage }) {
       if (this.purchases_page !== currentPage) {
-        this.Get_Sales(currentPage);
+        this.Get_Purchases(currentPage);
       }
     },
 
@@ -1769,16 +1904,16 @@ export default {
     //--------------------------- Get Purchases By user -------------\\
     Get_Purchases(page) {
       axios
-        .get(
-          "report/get_purchases_by_user?page=" +
-            page +
-            "&limit=" +
-            this.limit_purchases +
-            "&search=" +
-            this.search_purchases +
-            "&id=" +
-            this.$route.params.id
-        )
+        .get("report/get_purchases_by_user", {
+          params: {
+            page: page,
+            limit: this.limit_purchases,
+            search: this.search_purchases,
+            id: this.$route.params.id,
+            from: this.startDate || "",
+            to: this.endDate || ""
+          }
+        })
         .then(response => {
           this.purchases = response.data.purchases;
           this.totalRows_purchases = response.data.totalRows;
@@ -1786,7 +1921,7 @@ export default {
           this.isLoading = false;
         })
         .catch(response => {
-           setTimeout(() => {
+          setTimeout(() => {
             this.isLoading = false;
           }, 500);
         });
@@ -1815,27 +1950,25 @@ export default {
     //--------------------------- Get Quotations By user -------------\\
     Get_Quotations(page) {
       axios
-        .get(
-          "report/get_quotations_by_user?page=" +
-            page +
-            "&limit=" +
-            this.limit_quotations +
-            "&search=" +
-            this.search_quotations +
-            "&id=" +
-            this.$route.params.id
-        )
+        .get("report/get_quotations_by_user", {
+          params: {
+            page: page,
+            limit: this.limit_quotations,
+            search: this.search_quotations,
+            id: this.$route.params.id,
+            from: this.startDate || "",
+            to: this.endDate || ""
+          }
+        })
         .then(response => {
           this.quotations = response.data.quotations;
           this.totalRows_quotations = response.data.totalRows;
           this.rows_quotations[0].children = this.quotations;
         })
-        .catch(response => {
-         
-        });
+        .catch(response => {});
     },
 
-     //--------------------------- Event Page Change -------------\\
+    //--------------------------- Event Page Change -------------\\
     PageChangeTransfer({ currentPage }) {
       if (this.transfers_page !== currentPage) {
         this.Get_Transfers(currentPage);
@@ -1858,27 +1991,25 @@ export default {
     //--------------------------- Get Transfers By user -------------\\
     Get_Transfers(page) {
       axios
-        .get(
-          "report/get_transfer_by_user?page=" +
-            page +
-            "&limit=" +
-            this.limit_transfers +
-             "&search=" +
-            this.search_transfers +
-            "&id=" +
-            this.$route.params.id
-        )
+        .get("report/get_transfer_by_user", {
+          params: {
+            page: page,
+            limit: this.limit_transfers,
+            search: this.search_transfers,
+            id: this.$route.params.id,
+            from: this.startDate || "",
+            to: this.endDate || ""
+          }
+        })
         .then(response => {
           this.transfers = response.data.transfers;
           this.totalRows_transfers = response.data.totalRows;
           this.rows_transfers[0].children = this.transfers;
         })
-        .catch(response => {
-         
-        });
+        .catch(response => {});
     },
 
-      //--------------------------- Event Page Change -------------\\
+    //--------------------------- Event Page Change -------------\\
     PageChangeAdjustment({ currentPage }) {
       if (this.adjustments_page !== currentPage) {
         this.Get_adjustments(currentPage);
@@ -1901,24 +2032,22 @@ export default {
     //--------------------------- Get adjustment By user -------------\\
     Get_adjustments(page) {
       axios
-        .get(
-          "report/get_adjustment_by_user?page=" +
-            page +
-            "&limit=" +
-            this.limit_adjustments +
-            "&search=" +
-            this.search_adjustments +
-            "&id=" +
-            this.$route.params.id
-        )
+        .get("report/get_adjustment_by_user", {
+          params: {
+            page: page,
+            limit: this.limit_adjustments,
+            search: this.search_adjustments,
+            id: this.$route.params.id,
+            from: this.startDate || "",
+            to: this.endDate || ""
+          }
+        })
         .then(response => {
           this.adjustments = response.data.adjustments;
           this.totalRows_adjustments = response.data.totalRows;
           this.rows_adjustments[0].children = this.adjustments;
         })
-        .catch(response => {
-         
-        });
+        .catch(response => {});
     },
 
     //--------------------------- Event Page Change -------------\\
@@ -1944,16 +2073,16 @@ export default {
     //--------------------------- Get sales Returns By user -------------\\
     Get_Sales_Return(page) {
       axios
-        .get(
-          "/report/get_sales_return_by_user?page=" +
-            page +
-            "&limit=" +
-            this.limit_sales_return +
-            "&search=" +
-            this.search_return_sales +
-            "&id=" +
-            this.$route.params.id
-        )
+        .get("/report/get_sales_return_by_user", {
+          params: {
+            page: page,
+            limit: this.limit_sales_return,
+            search: this.search_return_sales,
+            id: this.$route.params.id,
+            from: this.startDate || "",
+            to: this.endDate || ""
+          }
+        })
         .then(response => {
           this.sales_return = response.data.sales_return;
           this.totalRows_sales_return = response.data.totalRows;
@@ -1977,7 +2106,7 @@ export default {
       }
     },
 
-     onSearch_return_purchases(value) {
+    onSearch_return_purchases(value) {
       this.search_return_purchases = value.searchTerm;
       this.Get_Purchases_Return(1);
     },
@@ -1985,16 +2114,16 @@ export default {
     //--------------------------- Get purchases Returns By user -------------\\
     Get_Purchases_Return(page) {
       axios
-        .get(
-          "/report/get_purchase_return_by_user?page=" +
-            page +
-            "&limit=" +
-            this.limit_purchases_return +
-            "&search=" +
-            this.search_return_purchases +
-            "&id=" +
-            this.$route.params.id
-        )
+        .get("/report/get_purchase_return_by_user", {
+          params: {
+            page: page,
+            limit: this.limit_purchases_return,
+            search: this.search_return_purchases,
+            id: this.$route.params.id,
+            from: this.startDate || "",
+            to: this.endDate || ""
+          }
+        })
         .then(response => {
           this.purchases_return = response.data.purchases_return;
           this.totalRows_purchases_return = response.data.totalRows;
@@ -2007,13 +2136,7 @@ export default {
   //----------------------------- Created function------------------- \\
 
   created: function() {
-    this.Get_Sales(1);
-    this.Get_Purchases(1);
-    this.Get_Quotations(1);
-    this.Get_Sales_Return(1);
-    this.Get_Purchases_Return(1);
-    this.Get_Transfers(1);
-    this.Get_adjustments(1);
+    this.reloadAll(1);
   }
 };
 </script>

@@ -4,25 +4,55 @@
 
     <div v-if="isLoading" class="loading_page spinner spinner-primary mr-3"></div>
 
-    <!-- Date Range Filter -->
-    <b-col md="12" class="text-center mb-3" v-if="!isLoading">
-      <date-range-picker
-        v-model="dateRange"
-        :startDate="startDate"
-        :endDate="endDate"
-        :time-picker="false"
-        :autoApply="true"
-        :showDropdowns="true"
-        :opens="'right'"
-        :drops="'down'"
-        @update="Submit_filter_dateRange"
-        :locale-data="locale"
-      >
-        <template v-slot:input="picker" style="min-width: 350px;">
-          {{ formatDateTime(picker.startDate) }} — {{ formatDateTime(picker.endDate) }}
-        </template>
-      </date-range-picker>
-    </b-col>
+    <!-- Date Range Filter & Quick Ranges -->
+    <b-row class="mb-3 align-items-center justify-content-center" v-if="!isLoading">
+      <b-col md="auto" class="text-center mb-2">
+        <b-button-group size="sm">
+          <b-button
+            :variant="activeRange === 'this_month' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('this_month')"
+          >
+            {{ $t('ThisMonth') || 'This Month' }}
+          </b-button>
+          <b-button
+            :variant="activeRange === 'last_month' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('last_month')"
+          >
+            {{ $t('LastMonth') || 'Last Month' }}
+          </b-button>
+          <b-button
+            :variant="activeRange === 'this_year' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('this_year')"
+          >
+            {{ $t('ThisYear') || 'This Year' }}
+          </b-button>
+          <b-button
+            :variant="activeRange === 'all' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('all')"
+          >
+            {{ $t('AllTime') || 'All Time' }}
+          </b-button>
+        </b-button-group>
+      </b-col>
+      <b-col md="auto" class="text-center mb-2">
+        <date-range-picker
+          v-model="dateRange"
+          :startDate="startDate"
+          :endDate="endDate"
+          :time-picker="false"
+          :autoApply="true"
+          :showDropdowns="true"
+          :opens="'right'"
+          :drops="'down'"
+          @update="Submit_filter_dateRange"
+          :locale-data="locale"
+        >
+          <template v-slot:input="picker" style="min-width: 250px;">
+            {{ formatDateTime(picker.startDate) }} — {{ formatDateTime(picker.endDate) }}
+          </template>
+        </date-range-picker>
+      </b-col>
+    </b-row>
 
     <b-card class="wrapper print-table-only" v-if="!isLoading">
       <vue-good-table
@@ -77,6 +107,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { mapGetters } from "vuex";
 import DateRangePicker from "vue2-daterange-picker";
+import "vue2-daterange-picker/dist/vue2-daterange-picker.css";
 import moment from "moment";
 
 export default {
@@ -85,8 +116,11 @@ export default {
   },
   components: { DateRangePicker },
   data() {
+    const startOfMonth = moment().startOf("month");
+    const endOfMonth = moment().endOf("month");
     return {
       isLoading: true,
+      activeRange: "this_month",
       serverParams: {
         sort: { field: "id", type: "desc" },
         page: 1,
@@ -95,9 +129,12 @@ export default {
       limit: "10",
       search: "",
       totalRows: "",
-      startDate: "",
-      endDate: "",
-      dateRange: { startDate: "", endDate: "" },
+      startDate: startOfMonth.format("YYYY-MM-DD"),
+      endDate: endOfMonth.format("YYYY-MM-DD"),
+      dateRange: {
+        startDate: startOfMonth.toDate(),
+        endDate: endOfMonth.toDate()
+      },
       locale: {
         Label: "Apply",
         cancelLabel: "Cancel",
@@ -110,7 +147,7 @@ export default {
       providers: [],
       provider: {},
       rows: [{
-        total_purchase: "Total",
+        name: "Total",
         children: [],
       }],
     };
@@ -122,7 +159,7 @@ export default {
       return [
         { label: this.$t("SupplierName"),            field: "name",           tdClass: "text-left", thClass: "text-left" },
         { label: this.$t("Phone"),                   field: "phone",          tdClass: "text-left", thClass: "text-left" },
-        { label: this.$t("Purchases"),               field: "total_purchase", tdClass: "text-left", thClass: "text-left", sortable: false },
+        { label: this.$t("Purchases"),               field: "total_purchase", type: "decimal", headerField: this.sumTotalPurchases, tdClass: "text-left", thClass: "text-left", sortable: false },
         { label: this.$t("TotalAmount"),             field: "total_amount",   type: "decimal", headerField: this.sumCount,  tdClass: "text-left", thClass: "text-left", sortable: false },
         { label: this.$t("Paid"),                    field: "total_paid",     type: "decimal", headerField: this.sumCount2, tdClass: "text-left", thClass: "text-left", sortable: false },
         { label: this.$t("Total_Purchase_Due"),      field: "due",            type: "decimal", headerField: this.sumCount3, tdClass: "text-left", thClass: "text-left", sortable: false },
@@ -133,152 +170,212 @@ export default {
   },
 
   methods: {
-
+    sumTotalPurchases(rowObj) {
+      if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) return 0;
+      return rowObj.children.reduce((s, r) => s + (parseInt(r.total_purchase, 10) || 0), 0);
+    },
     sumCount(rowObj) {
       if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) return 0;
-      return rowObj.children.reduce((s, r) => s + (typeof r.total_amount === "number" ? r.total_amount : 0), 0);
+      return rowObj.children.reduce((s, r) => s + (parseFloat(r.total_amount) || 0), 0);
     },
     sumCount2(rowObj) {
       if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) return 0;
-      return rowObj.children.reduce((s, r) => s + (typeof r.total_paid === "number" ? r.total_paid : 0), 0);
+      return rowObj.children.reduce((s, r) => s + (parseFloat(r.total_paid) || 0), 0);
     },
     sumCount3(rowObj) {
       if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) return 0;
-      return rowObj.children.reduce((s, r) => s + (typeof r.due === "number" ? r.due : 0), 0);
+      return rowObj.children.reduce((s, r) => s + (parseFloat(r.due) || 0), 0);
     },
     sumCount4(rowObj) {
       if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) return 0;
-      return rowObj.children.reduce((s, r) => s + (typeof r.return_Due === "number" ? r.return_Due : 0), 0);
+      return rowObj.children.reduce((s, r) => s + (parseFloat(r.return_Due) || 0), 0);
     },
 
-    //--------------------------- Providers_PDF (frontend jsPDF) -------------------------------\\
+    setQuickRange(type) {
+      this.activeRange = type;
+      if (type === "this_month") {
+        const start = moment().startOf("month");
+        const end = moment().endOf("month");
+        this.startDate = start.format("YYYY-MM-DD");
+        this.endDate = end.format("YYYY-MM-DD");
+        this.dateRange = { startDate: start.toDate(), endDate: end.toDate() };
+      } else if (type === "last_month") {
+        const start = moment().subtract(1, "month").startOf("month");
+        const end = moment().subtract(1, "month").endOf("month");
+        this.startDate = start.format("YYYY-MM-DD");
+        this.endDate = end.format("YYYY-MM-DD");
+        this.dateRange = { startDate: start.toDate(), endDate: end.toDate() };
+      } else if (type === "this_year") {
+        const start = moment().startOf("year");
+        const end = moment().endOf("year");
+        this.startDate = start.format("YYYY-MM-DD");
+        this.endDate = end.format("YYYY-MM-DD");
+        this.dateRange = { startDate: start.toDate(), endDate: end.toDate() };
+      } else if (type === "all") {
+        this.startDate = "";
+        this.endDate = "";
+        this.dateRange = { startDate: "", endDate: "" };
+      }
+      this.Get_Provider_Report(1);
+    },
+
+    //--------------------------- Providers_PDF (All Providers) -------------------------------\\
     Providers_PDF() {
       const self = this;
-      const pdf = new jsPDF("l", "pt");
-      try {
-        pdf.addFont("/fonts/Vazirmatn-Bold.ttf", "Vazirmatn", "normal");
-        pdf.addFont("/fonts/Vazirmatn-Bold.ttf", "Vazirmatn", "bold");
-      } catch (e) {}
-      pdf.setFont("Vazirmatn", "normal");
+      NProgress.start();
+      NProgress.set(0.1);
 
-      const marginX = 40;
-      const rtl = (self.$i18n && ["ar", "fa", "ur", "he"].includes(self.$i18n.locale)) ||
-                  (typeof document !== "undefined" && document.documentElement.dir === "rtl");
+      // Fetch all matching records with limit: -1
+      axios
+        .get("report/provider", {
+          params: {
+            page: 1,
+            SortField: self.serverParams.sort.field,
+            SortType: self.serverParams.sort.type,
+            search: self.search,
+            limit: -1,
+            from: self.startDate || "",
+            to: self.endDate || ""
+          }
+        })
+        .then(response => {
+          NProgress.done();
+          const providersData = response.data.report || [];
 
-      // Build filter items
-      const filterItems = [];
-      if (self.startDate && self.endDate)
-        filterItems.push({ label: "Date", value: `${self.startDate}  —  ${self.endDate}` });
-      const hasFilters = filterItems.length > 0;
+          const pdf = new jsPDF("l", "pt");
+          try {
+            pdf.addFont("/fonts/Vazirmatn-Bold.ttf", "Vazirmatn", "normal");
+            pdf.addFont("/fonts/Vazirmatn-Bold.ttf", "Vazirmatn", "bold");
+          } catch (e) {}
+          pdf.setFont("Vazirmatn", "normal");
 
-      // Table data
-      const data = self.rows[0].children || [];
-      const body = data.map(r => [
-        r.name || "",
-        r.phone || "",
-        r.total_purchase || 0,
-        parseFloat(r.total_amount || 0).toFixed(2),
-        parseFloat(r.total_paid || 0).toFixed(2),
-        parseFloat(r.due || 0).toFixed(2),
-        parseFloat(r.return_Due || 0).toFixed(2),
-      ]);
+          const marginX = 40;
+          const rtl = (self.$i18n && ["ar", "fa", "ur", "he"].includes(self.$i18n.locale)) ||
+                      (typeof document !== "undefined" && document.documentElement.dir === "rtl");
 
-      const totalAmount   = self.sumCount(self.rows[0]);
-      const totalPaid     = self.sumCount2(self.rows[0]);
-      const totalDue      = self.sumCount3(self.rows[0]);
-      const totalReturnDue = self.sumCount4(self.rows[0]);
-
-      const foot = [[
-        self.$t("Total") || "Total", "", "",
-        totalAmount.toFixed(2),
-        totalPaid.toFixed(2),
-        totalDue.toFixed(2),
-        totalReturnDue.toFixed(2),
-      ]];
-
-      const headers = [
-        self.$t("SupplierName"),
-        self.$t("Phone"),
-        self.$t("Purchases"),
-        self.$t("TotalAmount"),
-        self.$t("Paid"),
-        self.$t("Total_Purchase_Due"),
-        self.$t("Total_Purchase_Return_Due"),
-      ];
-
-      autoTable(pdf, {
-        head: [headers],
-        body,
-        foot,
-        startY: hasFilters ? 125 : 90,
-        theme: "striped",
-        margin: { left: marginX, right: marginX },
-        styles:             { font: "Vazirmatn", fontSize: 8, cellPadding: 4, halign: rtl ? "right" : "left", textColor: 33 },
-        headStyles:         { font: "Vazirmatn", fontStyle: "bold", fillColor: [26, 86, 219], textColor: 255 },
-        alternateRowStyles: { fillColor: [245, 247, 250] },
-        footStyles:         { font: "Vazirmatn", fontStyle: "bold", fillColor: [26, 86, 219], textColor: 255 },
-        didDrawPage(d) {
-          const pageW = pdf.internal.pageSize.getWidth();
-          const pageH = pdf.internal.pageSize.getHeight();
-
-          // Blue banner
-          pdf.setFillColor(26, 86, 219);
-          pdf.rect(0, 0, pageW, 60, "F");
-
-          // Title
-          pdf.setTextColor(255);
-          pdf.setFont("Vazirmatn", "bold");
-          pdf.setFontSize(16);
-          const title = self.$t("SuppliersReport") || "Suppliers Report";
-          rtl ? pdf.text(title, pageW - marginX, 38, { align: "right" })
-              : pdf.text(title, marginX, 38);
-
-          // Date range subtitle in banner
+          // Build filter items
+          const filterItems = [];
           if (self.startDate && self.endDate) {
-            pdf.setFontSize(9);
-            pdf.setFont("Vazirmatn", "normal");
-            const sub = `${self.startDate}  —  ${self.endDate}`;
-            rtl ? pdf.text(sub, pageW - marginX, 52, { align: "right" })
-                : pdf.text(sub, marginX, 52);
+            filterItems.push({ label: "Date Range", value: `${self.startDate}  —  ${self.endDate}` });
           }
-          pdf.setTextColor(33);
-
-          // Filter box
-          if (hasFilters) {
-            const lineH = 13;
-            const maxW = pageW - 2 * marginX;
-            const filterText = filterItems.map(f => `${f.label}: ${f.value}`).join("   |   ");
-            const lines = pdf.splitTextToSize(filterText, maxW).slice(0, 3);
-            const boxH = 8 + lines.length * lineH + 6;
-
-            pdf.setFillColor(235, 242, 255);
-            pdf.rect(0, 62, pageW, boxH, "F");
-            pdf.setFont("Vazirmatn", "bold");
-            pdf.setFontSize(7);
-            pdf.setTextColor(26, 86, 219);
-            rtl ? pdf.text("Applied Filters:", pageW - marginX, 72, { align: "right" })
-                : pdf.text("Applied Filters:", marginX, 72);
-            pdf.setFont("Vazirmatn", "normal");
-            pdf.setFontSize(8.5);
-            pdf.setTextColor(50, 50, 50);
-            lines.forEach((line, i) => {
-              rtl ? pdf.text(line, pageW - marginX, 83 + i * lineH, { align: "right" })
-                  : pdf.text(line, marginX, 83 + i * lineH);
-            });
-            pdf.setTextColor(33);
+          if (self.search) {
+            filterItems.push({ label: "Search", value: self.search });
           }
+          const hasFilters = filterItems.length > 0;
 
-          // Page numbers
-          pdf.setFontSize(8);
-          pdf.setTextColor(100);
-          const pn = `${d.pageNumber} / ${pdf.internal.getNumberOfPages()}`;
-          rtl ? pdf.text(pn, marginX, pageH - 14, { align: "left" })
-              : pdf.text(pn, pageW - marginX, pageH - 14, { align: "right" });
-        },
-      });
+          // Table data
+          const body = providersData.map(r => [
+            r.name || "",
+            r.phone || "",
+            r.total_purchase || 0,
+            parseFloat(r.total_amount || 0).toFixed(2),
+            parseFloat(r.total_paid || 0).toFixed(2),
+            parseFloat(r.due || 0).toFixed(2),
+            parseFloat(r.return_Due || 0).toFixed(2),
+          ]);
 
-      const currency = (self.currentUser && self.currentUser.currency) ? self.currentUser.currency + " " : "";
-      pdf.save(`Suppliers_Report.pdf`);
+          const totalPurchasesCount = providersData.reduce((s, r) => s + (parseInt(r.total_purchase, 10) || 0), 0);
+          const totalAmount   = providersData.reduce((s, r) => s + (parseFloat(r.total_amount) || 0), 0);
+          const totalPaid     = providersData.reduce((s, r) => s + (parseFloat(r.total_paid) || 0), 0);
+          const totalDue      = providersData.reduce((s, r) => s + (parseFloat(r.due) || 0), 0);
+          const totalReturnDue = providersData.reduce((s, r) => s + (parseFloat(r.return_Due) || 0), 0);
+
+          const foot = [[
+            self.$t("Total") || "Total",
+            "",
+            totalPurchasesCount,
+            totalAmount.toFixed(2),
+            totalPaid.toFixed(2),
+            totalDue.toFixed(2),
+            totalReturnDue.toFixed(2),
+          ]];
+
+          const headers = [
+            self.$t("SupplierName"),
+            self.$t("Phone"),
+            self.$t("Purchases"),
+            self.$t("TotalAmount"),
+            self.$t("Paid"),
+            self.$t("Total_Purchase_Due"),
+            self.$t("Total_Purchase_Return_Due"),
+          ];
+
+          autoTable(pdf, {
+            head: [headers],
+            body,
+            foot,
+            startY: hasFilters ? 125 : 90,
+            theme: "striped",
+            margin: { left: marginX, right: marginX },
+            styles:             { font: "Vazirmatn", fontSize: 8, cellPadding: 4, halign: rtl ? "right" : "left", textColor: 33 },
+            headStyles:         { font: "Vazirmatn", fontStyle: "bold", fillColor: [26, 86, 219], textColor: 255 },
+            alternateRowStyles: { fillColor: [245, 247, 250] },
+            footStyles:         { font: "Vazirmatn", fontStyle: "bold", fillColor: [26, 86, 219], textColor: 255 },
+            didDrawPage(d) {
+              const pageW = pdf.internal.pageSize.getWidth();
+              const pageH = pdf.internal.pageSize.getHeight();
+
+              // Blue banner
+              pdf.setFillColor(26, 86, 219);
+              pdf.rect(0, 0, pageW, 60, "F");
+
+              // Title
+              pdf.setTextColor(255);
+              pdf.setFont("Vazirmatn", "bold");
+              pdf.setFontSize(16);
+              const title = self.$t("SuppliersReport") || "Suppliers Purchase Report";
+              rtl ? pdf.text(title, pageW - marginX, 38, { align: "right" })
+                  : pdf.text(title, marginX, 38);
+
+              // Date range subtitle in banner
+              if (self.startDate && self.endDate) {
+                pdf.setFontSize(9);
+                pdf.setFont("Vazirmatn", "normal");
+                const sub = `${self.startDate}  —  ${self.endDate}`;
+                rtl ? pdf.text(sub, pageW - marginX, 52, { align: "right" })
+                    : pdf.text(sub, marginX, 52);
+              }
+              pdf.setTextColor(33);
+
+              // Filter box
+              if (hasFilters) {
+                const lineH = 13;
+                const maxW = pageW - 2 * marginX;
+                const filterText = filterItems.map(f => `${f.label}: ${f.value}`).join("   |   ");
+                const lines = pdf.splitTextToSize(filterText, maxW).slice(0, 3);
+                const boxH = 8 + lines.length * lineH + 6;
+
+                pdf.setFillColor(235, 242, 255);
+                pdf.rect(0, 62, pageW, boxH, "F");
+                pdf.setFont("Vazirmatn", "bold");
+                pdf.setFontSize(7);
+                pdf.setTextColor(26, 86, 219);
+                rtl ? pdf.text("Applied Filters:", pageW - marginX, 72, { align: "right" })
+                    : pdf.text("Applied Filters:", marginX, 72);
+                pdf.setFont("Vazirmatn", "normal");
+                pdf.setFontSize(8.5);
+                pdf.setTextColor(50, 50, 50);
+                lines.forEach((line, i) => {
+                  rtl ? pdf.text(line, pageW - marginX, 83 + i * lineH, { align: "right" })
+                      : pdf.text(line, marginX, 83 + i * lineH);
+                });
+                pdf.setTextColor(33);
+              }
+
+              // Page numbers
+              pdf.setFontSize(8);
+              pdf.setTextColor(100);
+              const pn = `${d.pageNumber} / ${pdf.internal.getNumberOfPages()}`;
+              rtl ? pdf.text(pn, marginX, pageH - 14, { align: "left" })
+                  : pdf.text(pn, pageW - marginX, pageH - 14, { align: "right" });
+            },
+          });
+
+          pdf.save(`Suppliers_Report.pdf`);
+        })
+        .catch(() => {
+          NProgress.done();
+        });
     },
 
     //---- update Params Table
@@ -321,11 +418,6 @@ export default {
     },
 
     printTableOnly() {
-      const root = this.$el;
-      if (!root) { window.print(); return; }
-      const tableCard = root.querySelector(".print-table-only");
-      if (!tableCard) { window.print(); return; }
-
       const providersData = Array.isArray(this.rows[0]?.children) && this.rows[0].children.length > 0
         ? this.rows[0].children
         : (this.providers || []);
@@ -348,14 +440,16 @@ export default {
       });
       tableHtml += `</tbody>`;
 
+      const totalPurchases = this.sumTotalPurchases(this.rows[0]);
       const totalAmount   = this.sumCount(this.rows[0]);
       const totalPaid     = this.sumCount2(this.rows[0]);
       const totalDue      = this.sumCount3(this.rows[0]);
       const totalReturnDue = this.sumCount4(this.rows[0]);
 
       tableHtml += `<tfoot><tr>`;
-      tableHtml += `<td class="text-left font-weight-bold">${this.$t("Total")}</td>`;
-      tableHtml += `<td colspan="2"></td>`;
+      tableHtml += `<td class="text-left font-weight-bold">${this.$t("Total") || "Total"}</td>`;
+      tableHtml += `<td></td>`;
+      tableHtml += `<td class="text-left font-weight-bold">${totalPurchases}</td>`;
       tableHtml += `<td class="text-left font-weight-bold">${this.formatNumber(totalAmount, 2)}</td>`;
       tableHtml += `<td class="text-left font-weight-bold">${this.formatNumber(totalPaid, 2)}</td>`;
       tableHtml += `<td class="text-left font-weight-bold">${this.formatNumber(totalDue, 2)}</td>`;
@@ -382,6 +476,7 @@ export default {
         this.startDate = start.format("YYYY-MM-DD");
         this.endDate   = end.format("YYYY-MM-DD");
       }
+      this.activeRange = "custom";
       this.Get_Provider_Report(1);
     },
 

@@ -4,25 +4,55 @@
 
     <div v-if="isLoading" class="loading_page spinner spinner-primary mr-3"></div>
 
-    <!-- Date Range Filter -->
-    <b-col md="12" class="text-center mb-3" v-if="!isLoading">
-      <date-range-picker
-        v-model="dateRange"
-        :startDate="startDate"
-        :endDate="endDate"
-        :time-picker="false"
-        :autoApply="true"
-        :showDropdowns="true"
-        :opens="'right'"
-        :drops="'down'"
-        @update="Submit_filter_dateRange"
-        :locale-data="locale"
-      >
-        <template v-slot:input="picker" style="min-width: 350px;">
-          {{ formatDateTime(picker.startDate) }} — {{ formatDateTime(picker.endDate) }}
-        </template>
-      </date-range-picker>
-    </b-col>
+    <!-- Date Range Filter & Quick Ranges -->
+    <b-row class="mb-3 align-items-center justify-content-center" v-if="!isLoading">
+      <b-col md="auto" class="text-center mb-2">
+        <b-button-group size="sm">
+          <b-button
+            :variant="activeRange === 'this_month' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('this_month')"
+          >
+            {{ $t('ThisMonth') || 'This Month' }}
+          </b-button>
+          <b-button
+            :variant="activeRange === 'last_month' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('last_month')"
+          >
+            {{ $t('LastMonth') || 'Last Month' }}
+          </b-button>
+          <b-button
+            :variant="activeRange === 'this_year' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('this_year')"
+          >
+            {{ $t('ThisYear') || 'This Year' }}
+          </b-button>
+          <b-button
+            :variant="activeRange === 'all' ? 'primary' : 'outline-primary'"
+            @click="setQuickRange('all')"
+          >
+            {{ $t('AllTime') || 'All Time' }}
+          </b-button>
+        </b-button-group>
+      </b-col>
+      <b-col md="auto" class="text-center mb-2">
+        <date-range-picker
+          v-model="dateRange"
+          :startDate="startDate"
+          :endDate="endDate"
+          :time-picker="false"
+          :autoApply="true"
+          :showDropdowns="true"
+          :opens="'right'"
+          :drops="'down'"
+          @update="Submit_filter_dateRange"
+          :locale-data="locale"
+        >
+          <template v-slot:input="picker" style="min-width: 250px;">
+            {{ formatDateTime(picker.startDate) }} — {{ formatDateTime(picker.endDate) }}
+          </template>
+        </date-range-picker>
+      </b-col>
+    </b-row>
 
     <b-card class="wrapper print-table-only" v-if="!isLoading">
       <vue-good-table
@@ -52,6 +82,9 @@
         styleClass="tableOne table-hover vgt-table mt-3"
       >
         <div slot="table-actions" class="mt-2 mb-3">
+          <b-button @click="Customers_PDF()" size="sm" variant="outline-success ripple m-1">
+            <lucide-icon name="copy" /> PDF
+          </b-button>
           <b-button @click="printTableOnly()" size="sm" variant="outline-secondary ripple m-1">
             <lucide-icon name="printer" /> {{ $t("print") }}
           </b-button>
@@ -71,9 +104,10 @@
   </div>
 </template>
 
-
 <script>
 import NProgress from "nprogress";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { mapActions, mapGetters } from "vuex";
 import DateRangePicker from "vue2-daterange-picker";
 import "vue2-daterange-picker/dist/vue2-daterange-picker.css";
@@ -85,8 +119,11 @@ export default {
   },
   components: { DateRangePicker },
   data() {
+    const startOfMonth = moment().startOf("month");
+    const endOfMonth = moment().endOf("month");
     return {
       isLoading: true,
+      activeRange: "this_month",
       serverParams: {
         sort: {
           field: "id",
@@ -98,9 +135,12 @@ export default {
       limit: "10",
       search: "",
       totalRows: "",
-      startDate: "",
-      endDate: "",
-      dateRange: { startDate: "", endDate: "" },
+      startDate: startOfMonth.format("YYYY-MM-DD"),
+      endDate: endOfMonth.format("YYYY-MM-DD"),
+      dateRange: {
+        startDate: startOfMonth.toDate(),
+        endDate: endOfMonth.toDate()
+      },
       locale: {
         Label: "Apply",
         cancelLabel: "Cancel",
@@ -113,12 +153,9 @@ export default {
       clients: [],
       client: {},
       rows: [{
-          total_sales: 'Total',
-         
-          children: [
-             
-          ],
-      },],
+        name: "Total",
+        children: [],
+      }],
     };
   },
 
@@ -126,7 +163,6 @@ export default {
     ...mapGetters(["currentUser"]),
     columns() {
       return [
-       
         {
           label: this.$t("CustomerName"),
           field: "name",
@@ -142,6 +178,8 @@ export default {
         {
           label: this.$t("TotalSales"),
           field: "total_sales",
+          type: "decimal",
+          headerField: this.sumTotalSales,
           tdClass: "text-left",
           thClass: "text-left",
           sortable: false
@@ -194,84 +232,224 @@ export default {
   },
 
   methods: {
-        sumCount(rowObj) {
-        let sum = 0;
-        if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) {
-            console.error('Invalid input for sumCount');
-            return sum;
-        }
+    sumTotalSales(rowObj) {
+      if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) return 0;
+      return rowObj.children.reduce((s, r) => s + (parseInt(r.total_sales, 10) || 0), 0);
+    },
 
-        for (let i = 0; i < rowObj.children.length; i++) {
-            if (typeof rowObj.children[i].total_amount === 'number') {
-                sum += rowObj.children[i].total_amount;
-            } else {
-                console.error('Invalid total_amount at index', i);
-            }
-        }
-        return sum;
+    sumCount(rowObj) {
+      if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) return 0;
+      return rowObj.children.reduce((s, r) => s + (parseFloat(r.total_amount) || 0), 0);
     },
 
     sumCount2(rowObj) {
-        let sum = 0;
-        if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) {
-            console.error('Invalid input for sumCount2');
-            return sum;
-        }
-
-        for (let i = 0; i < rowObj.children.length; i++) {
-            if (typeof rowObj.children[i].total_paid === 'number') {
-                sum += rowObj.children[i].total_paid;
-            } else {
-                console.error('Invalid total_paid at index', i);
-            }
-        }
-        return sum;
+      if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) return 0;
+      return rowObj.children.reduce((s, r) => s + (parseFloat(r.total_paid) || 0), 0);
     },
 
     sumCount3(rowObj) {
-        let sum = 0;
-        if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) {
-            console.error('Invalid input for sumCount3');
-            return sum;
-        }
-
-        for (let i = 0; i < rowObj.children.length; i++) {
-            if (typeof rowObj.children[i].due === 'number') {
-                sum += rowObj.children[i].due;
-            } else {
-                console.error('Invalid due at index', i);
-            }
-        }
-        return sum;
+      if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) return 0;
+      return rowObj.children.reduce((s, r) => s + (parseFloat(r.due) || 0), 0);
     },
 
     sumCount4(rowObj) {
-        let sum = 0;
-        if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) {
-            console.error('Invalid input for sumCount4');
-            return sum;
-        }
-
-        for (let i = 0; i < rowObj.children.length; i++) {
-            if (typeof rowObj.children[i].return_Due === 'number') {
-                sum += rowObj.children[i].return_Due;
-            } else {
-                console.error('Invalid return_Due at index', i);
-            }
-        }
-        return sum;
+      if (!rowObj || !rowObj.children || !Array.isArray(rowObj.children)) return 0;
+      return rowObj.children.reduce((s, r) => s + (parseFloat(r.return_Due) || 0), 0);
     },
 
-    
-     //--------------------------- Download_PDF-------------------------------\\
-    Download_PDF(client , id) {
-      // Start the progress bar.
+    setQuickRange(type) {
+      this.activeRange = type;
+      if (type === "this_month") {
+        const start = moment().startOf("month");
+        const end = moment().endOf("month");
+        this.startDate = start.format("YYYY-MM-DD");
+        this.endDate = end.format("YYYY-MM-DD");
+        this.dateRange = { startDate: start.toDate(), endDate: end.toDate() };
+      } else if (type === "last_month") {
+        const start = moment().subtract(1, "month").startOf("month");
+        const end = moment().subtract(1, "month").endOf("month");
+        this.startDate = start.format("YYYY-MM-DD");
+        this.endDate = end.format("YYYY-MM-DD");
+        this.dateRange = { startDate: start.toDate(), endDate: end.toDate() };
+      } else if (type === "this_year") {
+        const start = moment().startOf("year");
+        const end = moment().endOf("year");
+        this.startDate = start.format("YYYY-MM-DD");
+        this.endDate = end.format("YYYY-MM-DD");
+        this.dateRange = { startDate: start.toDate(), endDate: end.toDate() };
+      } else if (type === "all") {
+        this.startDate = "";
+        this.endDate = "";
+        this.dateRange = { startDate: "", endDate: "" };
+      }
+      this.Get_Client_Report(1);
+    },
+
+    //--------------------------- Customers_PDF (All Customers) -------------------------------\\
+    Customers_PDF() {
+      const self = this;
+      NProgress.start();
+      NProgress.set(0.1);
+
+      // Fetch all matching records with limit: -1
+      axios
+        .get("report/client", {
+          params: {
+            page: 1,
+            SortField: self.serverParams.sort.field,
+            SortType: self.serverParams.sort.type,
+            search: self.search,
+            limit: -1,
+            from: self.startDate || "",
+            to: self.endDate || ""
+          }
+        })
+        .then(response => {
+          NProgress.done();
+          const clientsData = response.data.report || [];
+
+          const pdf = new jsPDF("l", "pt");
+          try {
+            pdf.addFont("/fonts/Vazirmatn-Bold.ttf", "Vazirmatn", "normal");
+            pdf.addFont("/fonts/Vazirmatn-Bold.ttf", "Vazirmatn", "bold");
+          } catch (e) {}
+          pdf.setFont("Vazirmatn", "normal");
+
+          const marginX = 40;
+          const rtl = (self.$i18n && ["ar", "fa", "ur", "he"].includes(self.$i18n.locale)) ||
+                      (typeof document !== "undefined" && document.documentElement.dir === "rtl");
+
+          const filterItems = [];
+          if (self.startDate && self.endDate) {
+            filterItems.push({ label: "Date Range", value: `${self.startDate}  —  ${self.endDate}` });
+          }
+          if (self.search) {
+            filterItems.push({ label: "Search", value: self.search });
+          }
+          const hasFilters = filterItems.length > 0;
+
+          const body = clientsData.map(r => [
+            r.name || "",
+            r.phone || "",
+            r.total_sales || 0,
+            parseFloat(r.total_amount || 0).toFixed(2),
+            parseFloat(r.total_paid || 0).toFixed(2),
+            parseFloat(r.due || 0).toFixed(2),
+            parseFloat(r.return_Due || 0).toFixed(2),
+          ]);
+
+          const totalSalesCount = clientsData.reduce((s, r) => s + (parseInt(r.total_sales, 10) || 0), 0);
+          const totalAmount = clientsData.reduce((s, r) => s + (parseFloat(r.total_amount) || 0), 0);
+          const totalPaid = clientsData.reduce((s, r) => s + (parseFloat(r.total_paid) || 0), 0);
+          const totalDue = clientsData.reduce((s, r) => s + (parseFloat(r.due) || 0), 0);
+          const totalReturnDue = clientsData.reduce((s, r) => s + (parseFloat(r.return_Due) || 0), 0);
+
+          const foot = [[
+            self.$t("Total") || "Total",
+            "",
+            totalSalesCount,
+            totalAmount.toFixed(2),
+            totalPaid.toFixed(2),
+            totalDue.toFixed(2),
+            totalReturnDue.toFixed(2),
+          ]];
+
+          const headers = [
+            self.$t("CustomerName"),
+            self.$t("Phone"),
+            self.$t("TotalSales"),
+            self.$t("Amount"),
+            self.$t("Paid"),
+            self.$t("Total_Sale_Due"),
+            self.$t("Total_Sell_Return_Due"),
+          ];
+
+          autoTable(pdf, {
+            head: [headers],
+            body,
+            foot,
+            startY: hasFilters ? 125 : 90,
+            theme: "striped",
+            margin: { left: marginX, right: marginX },
+            styles:             { font: "Vazirmatn", fontSize: 8, cellPadding: 4, halign: rtl ? "right" : "left", textColor: 33 },
+            headStyles:         { font: "Vazirmatn", fontStyle: "bold", fillColor: [26, 86, 219], textColor: 255 },
+            alternateRowStyles: { fillColor: [245, 247, 250] },
+            footStyles:         { font: "Vazirmatn", fontStyle: "bold", fillColor: [26, 86, 219], textColor: 255 },
+            didDrawPage(d) {
+              const pageW = pdf.internal.pageSize.getWidth();
+              const pageH = pdf.internal.pageSize.getHeight();
+
+              // Blue banner
+              pdf.setFillColor(26, 86, 219);
+              pdf.rect(0, 0, pageW, 60, "F");
+
+              // Title
+              pdf.setTextColor(255);
+              pdf.setFont("Vazirmatn", "bold");
+              pdf.setFontSize(16);
+              const title = self.$t("CustomersReport") || "Customers Sales Report";
+              rtl ? pdf.text(title, pageW - marginX, 38, { align: "right" })
+                  : pdf.text(title, marginX, 38);
+
+              // Subtitle in banner
+              if (self.startDate && self.endDate) {
+                pdf.setFontSize(9);
+                pdf.setFont("Vazirmatn", "normal");
+                const sub = `${self.startDate}  —  ${self.endDate}`;
+                rtl ? pdf.text(sub, pageW - marginX, 52, { align: "right" })
+                    : pdf.text(sub, marginX, 52);
+              }
+              pdf.setTextColor(33);
+
+              // Filter summary box
+              if (hasFilters) {
+                const lineH = 13;
+                const maxW = pageW - 2 * marginX;
+                const filterText = filterItems.map(f => `${f.label}: ${f.value}`).join("   |   ");
+                const lines = pdf.splitTextToSize(filterText, maxW).slice(0, 3);
+                const boxH = 8 + lines.length * lineH + 6;
+
+                pdf.setFillColor(235, 242, 255);
+                pdf.rect(0, 62, pageW, boxH, "F");
+                pdf.setFont("Vazirmatn", "bold");
+                pdf.setFontSize(7);
+                pdf.setTextColor(26, 86, 219);
+                rtl ? pdf.text("Applied Filters:", pageW - marginX, 72, { align: "right" })
+                    : pdf.text("Applied Filters:", marginX, 72);
+                pdf.setFont("Vazirmatn", "normal");
+                pdf.setFontSize(8.5);
+                pdf.setTextColor(50, 50, 50);
+                lines.forEach((line, i) => {
+                  rtl ? pdf.text(line, pageW - marginX, 83 + i * lineH, { align: "right" })
+                      : pdf.text(line, marginX, 83 + i * lineH);
+                });
+                pdf.setTextColor(33);
+              }
+
+              // Page numbers
+              pdf.setFontSize(8);
+              pdf.setTextColor(100);
+              const pn = `${d.pageNumber} / ${pdf.internal.getNumberOfPages()}`;
+              rtl ? pdf.text(pn, marginX, pageH - 14, { align: "left" })
+                  : pdf.text(pn, pageW - marginX, pageH - 14, { align: "right" });
+            },
+          });
+
+          pdf.save("Customers_Report.pdf");
+        })
+        .catch(() => {
+          NProgress.done();
+        });
+    },
+
+    //--------------------------- Download_PDF for single client -------------------------------\\
+    Download_PDF(client, id) {
       NProgress.start();
       NProgress.set(0.1);
      
-       axios
+      axios
         .get("report/client_pdf/" + id, {
-          responseType: "blob", // important
+          responseType: "blob",
           headers: {
             "Content-Type": "application/json"
           }
@@ -283,21 +461,17 @@ export default {
           link.setAttribute("download", "report-" + client.name + ".pdf");
           document.body.appendChild(link);
           link.click();
-          // Complete the animation of the  progress bar.
           setTimeout(() => NProgress.done(), 500);
         })
         .catch(() => {
-          // Complete the animation of the  progress bar.
           setTimeout(() => NProgress.done(), 500);
         });
     },
 
-    //---- update Params Table
     updateParams(newProps) {
       this.serverParams = Object.assign({}, this.serverParams, newProps);
     },
 
-    //---- Event Page Change
     onPageChange({ currentPage }) {
       if (this.serverParams.page !== currentPage) {
         this.updateParams({ page: currentPage });
@@ -305,7 +479,6 @@ export default {
       }
     },
 
-    //---- Event Per Page Change
     onPerPageChange({ currentPerPage }) {
       if (this.limit !== currentPerPage) {
         this.limit = currentPerPage;
@@ -314,7 +487,6 @@ export default {
       }
     },
 
-    //---- Event on Sort Change
     onSortChange(params) {
       this.updateParams({
         sort: {
@@ -325,14 +497,11 @@ export default {
       this.Get_Client_Report(this.serverParams.page);
     },
 
-    //---- Event on Search
-
     onSearch(value) {
       this.search = value.searchTerm;
       this.Get_Client_Report(this.serverParams.page);
     },
 
-    //------------------------------Formetted Numbers -------------------------\\
     formatNumber(number, dec) {
       const value = (typeof number === "string"
         ? number
@@ -346,27 +515,22 @@ export default {
       return `${value[0]}.${formated}`;
     },
 
-    //------ Print Table Only - Print ALL customers data with all columns
     printTableOnly() {
       const title = `${this.$t("Reports")} / ${this.$t("CustomersReport")}`;
       const clients = Array.isArray(this.rows[0]?.children) ? this.rows[0].children : [];
       
-      // Build table header with all columns (excluding actions)
       let tableHTML = '<table style="width: 100%; border-collapse: collapse; font-size: 10px;">';
       tableHTML += '<thead><tr>';
       
-      // Filter out the actions column for printing
       this.columns.filter(col => col.field !== 'actions').forEach(col => {
         tableHTML += `<th style="border: 1px solid #ddd; padding: 6px 8px; background-color: #f5f5f5; font-weight: bold; text-align: left;">${col.label}</th>`;
       });
       tableHTML += '</tr></thead><tbody>';
       
-      // Build table rows with all data - format each cell according to column type
       clients.forEach(client => {
         tableHTML += '<tr>';
         this.columns.filter(col => col.field !== 'actions').forEach(col => {
           let cellValue = '';
-          
           if (col.field === 'name') {
             cellValue = client.name || '';
           } else if (col.field === 'phone') {
@@ -376,16 +540,30 @@ export default {
           } else if (col.field === 'total_amount' || col.field === 'total_paid' || col.field === 'due' || col.field === 'return_Due') {
             cellValue = this.formatNumber(client[col.field] || 0, 2);
           } else {
-            // Default: get value directly from client object
             cellValue = client[col.field] || '';
           }
-          
           tableHTML += `<td style="border: 1px solid #ddd; padding: 6px 8px; text-align: left;">${cellValue}</td>`;
         });
         tableHTML += '</tr>';
       });
-      
-      tableHTML += '</tbody></table>';
+      tableHTML += '</tbody>';
+
+      // Grand totals footer
+      const totalSales = this.sumTotalSales(this.rows[0]);
+      const totalAmount = this.sumCount(this.rows[0]);
+      const totalPaid = this.sumCount2(this.rows[0]);
+      const totalDue = this.sumCount3(this.rows[0]);
+      const totalReturnDue = this.sumCount4(this.rows[0]);
+
+      tableHTML += `<tfoot><tr>`;
+      tableHTML += `<td style="border: 1px solid #ddd; padding: 6px 8px; font-weight: bold; text-align: left;">${this.$t("Total") || "Total"}</td>`;
+      tableHTML += `<td style="border: 1px solid #ddd; padding: 6px 8px;"></td>`;
+      tableHTML += `<td style="border: 1px solid #ddd; padding: 6px 8px; font-weight: bold; text-align: left;">${totalSales}</td>`;
+      tableHTML += `<td style="border: 1px solid #ddd; padding: 6px 8px; font-weight: bold; text-align: left;">${this.formatNumber(totalAmount, 2)}</td>`;
+      tableHTML += `<td style="border: 1px solid #ddd; padding: 6px 8px; font-weight: bold; text-align: left;">${this.formatNumber(totalPaid, 2)}</td>`;
+      tableHTML += `<td style="border: 1px solid #ddd; padding: 6px 8px; font-weight: bold; text-align: left;">${this.formatNumber(totalDue, 2)}</td>`;
+      tableHTML += `<td style="border: 1px solid #ddd; padding: 6px 8px; font-weight: bold; text-align: left;">${this.formatNumber(totalReturnDue, 2)}</td>`;
+      tableHTML += `</tr></tfoot></table>`;
 
       const w = window.open("", "_blank");
       if (!w) {
@@ -408,7 +586,6 @@ export default {
     <title>${title}</title>
     ${links}
     <style>
-      /* Force visibility in print (some global POS print CSS hides body) */
       @media print { 
         body, body * { visibility: visible !important; }
         @page { size: A4 landscape; margin: 0.3cm; }
@@ -419,10 +596,11 @@ export default {
       th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; font-size: 10px; }
       th { background-color: #f5f5f5; font-weight: bold; }
       tr:nth-child(even) { background-color: #f9f9f9; }
+      tfoot tr td { background-color: #f0f4f8; font-weight: bold; }
     </style>
   </head>
   <body>
-    <div class="print-header">${title}</div>
+    <div class="print-header">${title} ${this.startDate && this.endDate ? `(${this.startDate} — ${this.endDate})` : ''}</div>
     ${tableHTML}
   </body>
 </html>`);
@@ -441,6 +619,7 @@ export default {
       if (start && end) {
         this.startDate = start.format("YYYY-MM-DD");
         this.endDate   = end.format("YYYY-MM-DD");
+        this.activeRange = "custom";
       }
       this.Get_Client_Report(1);
     },
@@ -449,10 +628,7 @@ export default {
       return date ? moment(date).format("YYYY-MM-DD") : "";
     },
 
-    //--------------------------- Get Customer Report -------------\\
-
     Get_Client_Report(page) {
-      // Start the progress bar.
       NProgress.start();
       NProgress.set(0.1);
       axios
@@ -463,33 +639,28 @@ export default {
             SortType: this.serverParams.sort.type,
             search: this.search,
             limit: this.limit,
-            from: this.startDate,
-            to: this.endDate
+            from: this.startDate || "",
+            to: this.endDate || ""
           }
         })
         .then(response => {
-          this.clients = response.data.report;
+          this.clients = response.data.report || [];
           this.totalRows = response.data.totalRows;
           this.rows[0].children = this.clients;
-          // Complete the animation of theprogress bar.
           NProgress.done();
           this.isLoading = false;
         })
-        .catch(response => {
-          // Complete the animation of theprogress bar.
+        .catch(() => {
           NProgress.done();
           setTimeout(() => {
             this.isLoading = false;
           }, 500);
         });
     }
-  }, //end Methods
-
-  //----------------------------- Created function------------------- \\
+  },
 
   created: function() {
-    this.Get_Client_Report(1);
-    
+    this.setQuickRange("this_month");
   }
 };
 </script>

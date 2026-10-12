@@ -126,21 +126,29 @@ class ReportController extends BaseController
         $totalRows = $clients->count();
         if ($perPage == '-1') {
             $perPage = $totalRows;
+            $offSet = 0;
         }
+
+        $allowedClientSort = ['id', 'name', 'code', 'phone'];
+        if (! in_array($order, $allowedClientSort, true)) {
+            $order = 'id';
+        }
+        $dir = in_array(strtolower($dir ?? 'desc'), ['asc', 'desc'], true) ? $dir : 'desc';
+
         $clients = $clients->offset($offSet)
             ->limit($perPage)
             ->orderBy($order, $dir)
             ->get();
 
         foreach ($clients as $client) {
-            $item['total_sales'] = DB::table('sales')
+            $total_sales = DB::table('sales')
                 ->where('deleted_at', '=', null)
                 ->where('client_id', $client->id)
                 ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
                 ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
                 ->count();
 
-            $item['total_amount'] = DB::table('sales')
+            $total_amount = DB::table('sales')
                 ->where('deleted_at', '=', null)
                 ->where('statut', 'completed')
                 ->where('client_id', $client->id)
@@ -148,7 +156,7 @@ class ReportController extends BaseController
                 ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
                 ->sum('GrandTotal');
 
-            $item['total_paid'] = DB::table('sales')
+            $total_paid = DB::table('sales')
                 ->where('deleted_at', '=', null)
                 ->where('statut', 'completed')
                 ->where('client_id', $client->id)
@@ -156,23 +164,31 @@ class ReportController extends BaseController
                 ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
                 ->sum('paid_amount');
 
-            $item['due'] = $item['total_amount'] - $item['total_paid'];
+            $due = $total_amount - $total_paid;
 
-            $item['total_amount_return'] = DB::table('sale_returns')
+            $total_amount_return = DB::table('sale_returns')
                 ->where('deleted_at', '=', null)
                 ->where('client_id', $client->id)
                 ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
                 ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
                 ->sum('GrandTotal');
 
-            $item['total_paid_return'] = DB::table('sale_returns')
+            $total_paid_return = DB::table('sale_returns')
                 ->where('sale_returns.deleted_at', '=', null)
                 ->where('sale_returns.client_id', $client->id)
                 ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
                 ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
                 ->sum('paid_amount');
 
-            $item['return_Due'] = $item['total_amount_return'] - $item['total_paid_return'];
+            $return_Due = $total_amount_return - $total_paid_return;
+
+            $item['total_sales'] = (int) $total_sales;
+            $item['total_amount'] = round((float) $total_amount, 2);
+            $item['total_paid'] = round((float) $total_paid, 2);
+            $item['due'] = round((float) $due, 2);
+            $item['total_amount_return'] = round((float) $total_amount_return, 2);
+            $item['total_paid_return'] = round((float) $total_paid_return, 2);
+            $item['return_Due'] = round((float) $return_Due, 2);
 
             $item['name'] = $client->name;
             $item['phone'] = $client->phone;
@@ -727,6 +743,16 @@ class ReportController extends BaseController
             ->toArray();
     }
 
+    // Clean string 'null' / 'undefined' / empty string from request
+    foreach (['Ref', 'statut', 'client_id', 'payment_statut', 'warehouse_id', 'user_id', 'search'] as $filterKey) {
+        if ($request->has($filterKey)) {
+            $val = $request->get($filterKey);
+            if ($val === 'null' || $val === 'undefined' || $val === '') {
+                $request->merge([$filterKey => null]);
+            }
+        }
+    }
+
     // Filter fields With Params to retrieve
     $param = [
         0 => 'like',
@@ -742,7 +768,7 @@ class ReportController extends BaseController
         2 => 'client_id',
         3 => 'payment_statut',
         4 => 'warehouse_id',
-        5 => 'warehouse_id',
+        5 => 'user_id',
     ];
 
     $data = [];
@@ -842,6 +868,12 @@ class ReportController extends BaseController
     if ($perPage == '-1') {
         $perPage = $totalRows;
     }
+
+    $allowedSort = ['id', 'date', 'Ref', 'statut', 'discount', 'shipping', 'warehouse_id', 'client_id', 'GrandTotal', 'paid_amount', 'payment_statut', 'user_id'];
+    if (! in_array($order, $allowedSort, true)) {
+        $order = 'id';
+    }
+    $dir = in_array(strtolower($dir ?? 'desc'), ['asc', 'desc'], true) ? $dir : 'desc';
 
     $Sales = $Filtred->offset($offSet)
         ->limit($perPage)
@@ -1122,21 +1154,29 @@ class ReportController extends BaseController
         $totalRows = $providers->count();
         if ($perPage == '-1') {
             $perPage = $totalRows;
+            $offSet = 0;
         }
+
+        $allowedProviderSort = ['id', 'name', 'code', 'phone'];
+        if (! in_array($order, $allowedProviderSort, true)) {
+            $order = 'id';
+        }
+        $dir = in_array(strtolower($dir ?? 'desc'), ['asc', 'desc'], true) ? $dir : 'desc';
+
         $providers = $providers->offset($offSet)
             ->limit($perPage)
             ->orderBy($order, $dir)
             ->get();
 
         foreach ($providers as $provider) {
-            $item['total_purchase'] = DB::table('purchases')
+            $total_purchase = DB::table('purchases')
                 ->where('deleted_at', '=', null)
                 ->where('provider_id', $provider->id)
                 ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
                 ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
                 ->count();
 
-            $item['total_amount'] = DB::table('purchases')
+            $total_amount = DB::table('purchases')
                 ->where('deleted_at', '=', null)
                 ->where('statut', 'received')
                 ->where('provider_id', $provider->id)
@@ -1144,7 +1184,7 @@ class ReportController extends BaseController
                 ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
                 ->sum('GrandTotal');
 
-            $item['total_paid'] = DB::table('purchases')
+            $total_paid = DB::table('purchases')
                 ->where('deleted_at', '=', null)
                 ->where('statut', 'received')
                 ->where('provider_id', $provider->id)
@@ -1152,23 +1192,31 @@ class ReportController extends BaseController
                 ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
                 ->sum('paid_amount');
 
-            $item['due'] = $item['total_amount'] - $item['total_paid'];
+            $due = $total_amount - $total_paid;
 
-            $item['total_amount_return'] = DB::table('purchase_returns')
+            $total_amount_return = DB::table('purchase_returns')
                 ->where('deleted_at', '=', null)
                 ->where('provider_id', $provider->id)
                 ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
                 ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
                 ->sum('GrandTotal');
 
-            $item['total_paid_return'] = DB::table('purchase_returns')
+            $total_paid_return = DB::table('purchase_returns')
                 ->where('deleted_at', '=', null)
                 ->where('provider_id', $provider->id)
                 ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
                 ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
                 ->sum('paid_amount');
 
-            $item['return_Due'] = $item['total_amount_return'] - $item['total_paid_return'];
+            $return_Due = $total_amount_return - $total_paid_return;
+
+            $item['total_purchase'] = (int) $total_purchase;
+            $item['total_amount'] = round((float) $total_amount, 2);
+            $item['total_paid'] = round((float) $total_paid, 2);
+            $item['due'] = round((float) $due, 2);
+            $item['total_amount_return'] = round((float) $total_amount_return, 2);
+            $item['total_paid_return'] = round((float) $total_paid_return, 2);
+            $item['return_Due'] = round((float) $return_Due, 2);
 
             $item['id'] = $provider->id;
             $item['name'] = $provider->name;
@@ -3278,6 +3326,9 @@ class ReportController extends BaseController
         // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
 
+        $from = $request->filled('from') ? $request->from : null;
+        $to   = $request->filled('to')   ? $request->to   : null;
+
         $user = Auth::user();
         // New way: Check user's record_view field (user-level boolean)
         // Backward compatibility: If record_view is null, fall back to role permission check
@@ -3290,6 +3341,8 @@ class ReportController extends BaseController
                 }
             })
             ->where('user_id', $request->id)
+            ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
+            ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
              // Search With Multiple Param
             ->where(function ($query) use ($request) {
                 return $query->when($request->filled('search'), function ($query) use ($request) {
@@ -3312,6 +3365,7 @@ class ReportController extends BaseController
         $totalRows = $sales->count();
         if ($perPage == '-1') {
             $perPage = $totalRows;
+            $offSet = 0;
         }
         $sales = $sales->offset($offSet)
             ->limit($perPage)
@@ -3355,6 +3409,9 @@ class ReportController extends BaseController
         // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
 
+        $from = $request->filled('from') ? $request->from : null;
+        $to   = $request->filled('to')   ? $request->to   : null;
+
         $user = Auth::user();
         // New way: Check user's record_view field (user-level boolean)
         // Backward compatibility: If record_view is null, fall back to role permission check
@@ -3364,6 +3421,8 @@ class ReportController extends BaseController
         $Quotations = Quotation::with('client', 'warehouse', 'user')
             ->where('deleted_at', '=', null)
             ->where('user_id', $request->id)
+            ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
+            ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
             ->where(function ($query) use ($ShowRecord) {
                 if (! $ShowRecord) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -3390,6 +3449,7 @@ class ReportController extends BaseController
         $totalRows = $Quotations->count();
         if ($perPage == '-1') {
             $perPage = $totalRows;
+            $offSet = 0;
         }
         $Quotations = $Quotations->offset($offSet)
             ->limit($perPage)
@@ -3429,6 +3489,9 @@ class ReportController extends BaseController
         $offSet = ($pageStart * $perPage) - $perPage;
         $data = [];
 
+        $from = $request->filled('from') ? $request->from : null;
+        $to   = $request->filled('to')   ? $request->to   : null;
+
         $user = Auth::user();
         // New way: Check user's record_view field (user-level boolean)
         // Backward compatibility: If record_view is null, fall back to role permission check
@@ -3437,6 +3500,8 @@ class ReportController extends BaseController
         $purchases = Purchase::where('deleted_at', '=', null)
             ->with('user', 'provider', 'warehouse')
             ->where('user_id', $request->id)
+            ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
+            ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
             ->where(function ($query) use ($ShowRecord) {
                 if (! $ShowRecord) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -3464,6 +3529,7 @@ class ReportController extends BaseController
         $totalRows = $purchases->count();
         if ($perPage == '-1') {
             $perPage = $totalRows;
+            $offSet = 0;
         }
         $purchases = $purchases->offset($offSet)
             ->limit($perPage)
@@ -3505,6 +3571,9 @@ class ReportController extends BaseController
         $offSet = ($pageStart * $perPage) - $perPage;
         $data = [];
 
+        $from = $request->filled('from') ? $request->from : null;
+        $to   = $request->filled('to')   ? $request->to   : null;
+
         //  Check If User Has Permission Show All Records
         $user = Auth::user();
         // New way: Check user's record_view field (user-level boolean)
@@ -3513,6 +3582,8 @@ class ReportController extends BaseController
 
         $SaleReturn = SaleReturn::where('deleted_at', '=', null)->with('user', 'client', 'warehouse')
             ->where('user_id', $request->id)
+            ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
+            ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
             ->where(function ($query) use ($ShowRecord) {
                 if (! $ShowRecord) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -3540,6 +3611,7 @@ class ReportController extends BaseController
         $totalRows = $SaleReturn->count();
         if ($perPage == '-1') {
             $perPage = $totalRows;
+            $offSet = 0;
         }
         $SaleReturn = $SaleReturn->offset($offSet)
             ->limit($perPage)
@@ -3581,6 +3653,9 @@ class ReportController extends BaseController
         $offSet = ($pageStart * $perPage) - $perPage;
         $data = [];
 
+        $from = $request->filled('from') ? $request->from : null;
+        $to   = $request->filled('to')   ? $request->to   : null;
+
         $user = Auth::user();
         // New way: Check user's record_view field (user-level boolean)
         // Backward compatibility: If record_view is null, fall back to role permission check
@@ -3589,6 +3664,8 @@ class ReportController extends BaseController
         $PurchaseReturn = PurchaseReturn::where('deleted_at', '=', null)
             ->with('user', 'provider', 'warehouse')
             ->where('user_id', $request->id)
+            ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
+            ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
             ->where(function ($query) use ($ShowRecord) {
                 if (! $ShowRecord) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -3616,6 +3693,7 @@ class ReportController extends BaseController
         $totalRows = $PurchaseReturn->count();
         if ($perPage == '-1') {
             $perPage = $totalRows;
+            $offSet = 0;
         }
         $PurchaseReturn = $PurchaseReturn->offset($offSet)
             ->limit($perPage)
@@ -3658,6 +3736,9 @@ class ReportController extends BaseController
         $offSet = ($pageStart * $perPage) - $perPage;
         $data = [];
 
+        $from = $request->filled('from') ? $request->from : null;
+        $to   = $request->filled('to')   ? $request->to   : null;
+
         $user = Auth::user();
         // New way: Check user's record_view field (user-level boolean)
         // Backward compatibility: If record_view is null, fall back to role permission check
@@ -3666,6 +3747,8 @@ class ReportController extends BaseController
         $transfers = Transfer::with('from_warehouse', 'to_warehouse')
             ->with('user')
             ->where('user_id', $request->id)
+            ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
+            ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
             ->where(function ($query) use ($ShowRecord) {
                 if (! $ShowRecord) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -3692,6 +3775,7 @@ class ReportController extends BaseController
         $totalRows = $transfers->count();
         if ($perPage == '-1') {
             $perPage = $totalRows;
+            $offSet = 0;
         }
         $transfers = $transfers->offset($offSet)
             ->limit($perPage)
@@ -3733,6 +3817,9 @@ class ReportController extends BaseController
         $offSet = ($pageStart * $perPage) - $perPage;
         $data = [];
 
+        $from = $request->filled('from') ? $request->from : null;
+        $to   = $request->filled('to')   ? $request->to   : null;
+
         $user = Auth::user();
         // New way: Check user's record_view field (user-level boolean)
         // Backward compatibility: If record_view is null, fall back to role permission check
@@ -3741,6 +3828,8 @@ class ReportController extends BaseController
         $Adjustments = Adjustment::with('warehouse')
             ->with('user')
             ->where('user_id', $request->id)
+            ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
+            ->when($to,   fn($q) => $q->whereDate('date', '<=', $to))
             ->where(function ($query) use ($ShowRecord) {
                 if (! $ShowRecord) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -3761,6 +3850,7 @@ class ReportController extends BaseController
         $totalRows = $Adjustments->count();
         if ($perPage == '-1') {
             $perPage = $totalRows;
+            $offSet = 0;
         }
         $Adjustments = $Adjustments->offset($offSet)
             ->limit($perPage)
