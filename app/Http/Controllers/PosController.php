@@ -238,8 +238,21 @@ class PosController extends BaseController
 
                 foreach ($request->payments as $index => $payment) {
                     if (isset($payment['amount']) && $payment['amount'] > 0) {
-                        // Prefer per-line account selection; no global account fallback
-                        $accountId = $payment['account_id'] ?? null;
+                        // Prefer per-line account selection; fallback to root account_id, then settings default account
+                        $accountId = (!empty($payment['account_id']) && $payment['account_id'] != '0' && $payment['account_id'] !== '')
+                            ? $payment['account_id']
+                            : ((!empty($request->account_id) && $request->account_id != '0' && $request->account_id !== '') ? $request->account_id : null);
+
+                        if (! $accountId) {
+                            $defaultSetting = Setting::first();
+                            $accountId = ($defaultSetting && !empty($defaultSetting->default_account_id) && $defaultSetting->default_account_id != '0')
+                                ? $defaultSetting->default_account_id
+                                : null;
+                        }
+                        if (! $accountId) {
+                            $firstAcc = Account::whereNull('deleted_at')->first();
+                            $accountId = $firstAcc ? $firstAcc->id : null;
+                        }
 
                         $originalAmount = $payment['amount'];
                         $paymentAmount = $originalAmount;
@@ -1139,7 +1152,21 @@ class PosController extends BaseController
                             $PaymentSale->change = $request['change'];
                             $PaymentSale->notes = $request->payment['notes'];
                             $PaymentSale->user_id = Auth::user()->id;
-                            $PaymentSale->account_id = $request->payment['account_id'] ? $request->payment['account_id'] : null;
+                            $draftAccountId = (!empty($request->payment['account_id']) && $request->payment['account_id'] != '0')
+                                ? $request->payment['account_id']
+                                : ((!empty($request->account_id) && $request->account_id != '0') ? $request->account_id : null);
+                            if (! $draftAccountId) {
+                                $draftSetting = Setting::first();
+                                $draftAccountId = ($draftSetting && !empty($draftSetting->default_account_id) && $draftSetting->default_account_id != '0')
+                                    ? $draftSetting->default_account_id
+                                    : null;
+                            }
+                            if (! $draftAccountId) {
+                                $firstAcc = Account::whereNull('deleted_at')->first();
+                                $draftAccountId = $firstAcc ? $firstAcc->id : null;
+                            }
+
+                            $PaymentSale->account_id = $draftAccountId;
 
                             $PaymentSale->save();
 
@@ -1307,7 +1334,10 @@ class PosController extends BaseController
         $this->authorizeForUser($request->user('api'), 'Sales_pos', Sale::class);
         $clients = Client::where('deleted_at', '=', null)->get(['id', 'name', 'phone']);
         $settings = Setting::where('deleted_at', '=', null)->with('Client')->first();
-        $accounts = Account::where('deleted_at', '=', null)->orderBy('id', 'desc')->get(['id', 'account_name']);
+        $accounts = Account::whereNull('deleted_at')
+            ->orderByRaw("CASE WHEN LOWER(account_name) LIKE '%cash%' THEN 0 ELSE 1 END")
+            ->orderBy('id', 'asc')
+            ->get(['id', 'account_name', 'account_num']);
 
         $draft_sale_data = DraftSale::with('details.product.unitSale')->where('deleted_at', '=', null)->findOrFail($id);
 
@@ -1846,7 +1876,10 @@ class PosController extends BaseController
         $this->authorizeForUser($request->user('api'), 'Sales_pos', Sale::class);
         $clients = Client::where('deleted_at', '=', null)->get(['id', 'name', 'phone']);
         $settings = Setting::where('deleted_at', '=', null)->with('Client')->first();
-        $accounts = Account::where('deleted_at', '=', null)->orderBy('id', 'desc')->get(['id', 'account_name']);
+        $accounts = Account::whereNull('deleted_at')
+            ->orderByRaw("CASE WHEN LOWER(account_name) LIKE '%cash%' THEN 0 ELSE 1 END")
+            ->orderBy('id', 'asc')
+            ->get(['id', 'account_name', 'account_num']);
 
         // get warehouses assigned to user
         $user_auth = auth()->user();
@@ -1941,7 +1974,9 @@ class PosController extends BaseController
             'default_client_eligible' => $default_client_eligible,
             'point_to_amount_rate' => $settings->point_to_amount_rate,
             'default_tax' => $settings->default_tax ?? 0,
-            'default_account_id' => $settings->default_account_id ?? null,
+            'default_account_id' => ($settings && !empty($settings->default_account_id) && $settings->default_account_id != '0' && $accounts->contains('id', $settings->default_account_id))
+                ? $settings->default_account_id
+                : (($cashAcc = $accounts->first(function($a) { return stripos($a->account_name, 'cash') !== false; })) ? $cashAcc->id : ($accounts->first() ? $accounts->first()->id : null)),
             'default_payment_method_id' => $settings->default_payment_method_id ?? null,
             'pos_settings' => $pos_setting,
         ]);

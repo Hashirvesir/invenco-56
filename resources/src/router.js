@@ -669,6 +669,14 @@ const baseRoutes = [
                             )
                     },
                     {
+                        name: "detail_expense",
+                        path: "detail/:id",
+                        component: () =>
+                            import(
+                                /* webpackChunkName: "detail_expense" */ "./views/app/pages/expense/detail_expense"
+                            )
+                    },
+                    {
                         name: "expense_category",
                         path: "category",
                         component: () =>
@@ -804,6 +812,14 @@ const baseRoutes = [
                         component: () =>
                             import(
                                 /* webpackChunkName: "accounting_v2_chart_of_accounts" */ "./views/app/pages/accounting_v2/chart_of_accounts"
+                            )
+                    },
+                    {
+                        name: "accounting_v2_account_ledger",
+                        path: "chart-of-accounts/:id/ledger",
+                        component: () =>
+                            import(
+                                /* webpackChunkName: "accounting_v2_account_ledger" */ "./views/app/pages/accounting_v2/account_ledger"
                             )
                     },
                     {

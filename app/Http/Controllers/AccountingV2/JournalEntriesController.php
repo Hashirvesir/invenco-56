@@ -23,7 +23,8 @@ class JournalEntriesController extends Controller
         if (! Schema::hasTable('acc_journal_entries')) {
             return response()->json(['data' => [], 'total' => 0]);
         }
-        $q = JournalEntry::query()->orderByDesc('date')->orderByDesc('id');
+        $q = JournalEntry::query();
+
         if ($request->filled('status')) {
             $q->where('status', $request->get('status'));
         }
@@ -36,6 +37,35 @@ class JournalEntriesController extends Controller
         if ($request->filled('to')) {
             $q->where('date', '<=', $request->get('to'));
         }
+        if ($request->filled('coa_id')) {
+            $coaId = (int) $request->get('coa_id');
+            $q->whereHas('lines', function ($lq) use ($coaId) {
+                $lq->where('coa_id', $coaId);
+            });
+        }
+        if ($request->filled('search')) {
+            $term = trim($request->get('search'));
+            if ($term !== '') {
+                $q->where(function ($sub) use ($term) {
+                    $sub->where('id', 'LIKE', "%{$term}%")
+                        ->orWhere('description', 'LIKE', "%{$term}%")
+                        ->orWhere('reference_type', 'LIKE', "%{$term}%")
+                        ->orWhere('reference_id', 'LIKE', "%{$term}%")
+                        ->orWhereHas('lines', function ($lq) use ($term) {
+                            $lq->where('memo', 'LIKE', "%{$term}%");
+                        });
+                });
+            }
+        }
+
+        $order = $request->get('SortField', 'date');
+        $dir = strtolower($request->get('SortType', 'desc')) === 'asc' ? 'asc' : 'desc';
+        if (in_array($order, ['date', 'id', 'status', 'reference_type', 'description'])) {
+            $q->orderBy($order, $dir);
+        } else {
+            $q->orderByDesc('date')->orderByDesc('id');
+        }
+
         $items = $q->with('lines')->paginate($request->get('limit', 20));
 
         return response()->json($items);
@@ -160,9 +190,7 @@ class JournalEntriesController extends Controller
         $this->authorizeForUser($request->user('api'), 'journal_entries', Account::class);
 
         $entry = JournalEntry::findOrFail($id);
-        if ($entry->status === 'posted') {
-            return response()->json(['message' => 'Posted entries cannot be deleted. Create a reversing entry instead.'], 422);
-        }
+        
         DB::transaction(function () use ($entry) {
             JournalEntryLine::where('journal_entry_id', $entry->id)->delete();
             $entry->delete();

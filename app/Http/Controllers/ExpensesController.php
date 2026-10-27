@@ -122,7 +122,7 @@ class ExpensesController extends BaseController
             $data[] = $item;
         }
 
-        $Expenses_category = ExpenseCategory::where('deleted_at', '=', null)->get(['id', 'name']);
+        $Expenses_category = ExpenseCategory::with('chartOfAccount:id,code,name')->where('deleted_at', '=', null)->get(['id', 'name', 'coa_id']);
         $accounts = Account::where('deleted_at', '=', null)->get(['id', 'account_name']);
         $payment_methods = PaymentMethod::where('deleted_at', '=', null)->get(['id', 'name']);
 
@@ -159,22 +159,41 @@ class ExpensesController extends BaseController
                 'expense.category_id' => 'required',
                 'expense.details' => 'required',
                 'expense.amount' => 'required',
-                'expense.payment_method_id' => 'required',
             ]);
+
+            // Auto-resolve account_id if not provided
+            $accountId = $request['expense']['account_id'] ?? null;
+            if (! $accountId) {
+                $setting = \App\Models\Setting::whereNull('deleted_at')->first();
+                $accountId = ($setting && $setting->default_account_id) ? $setting->default_account_id : Account::whereNull('deleted_at')->where('account_name', 'LIKE', '%cash%')->value('id');
+            }
+
+            // Auto-resolve payment_method_id from account if not provided
+            $paymentMethodId = $request['expense']['payment_method_id'] ?? null;
+            if (! $paymentMethodId) {
+                $account = Account::find($accountId);
+                if ($account && (stripos($account->account_name, 'bank') !== false || stripos($account->account_name, 'ubl') !== false || stripos($account->account_name, 'meezan') !== false)) {
+                    $pm = PaymentMethod::whereNull('deleted_at')->where('name', 'LIKE', '%bank%')->first();
+                    $paymentMethodId = $pm ? $pm->id : 1;
+                } else {
+                    $pm = PaymentMethod::whereNull('deleted_at')->where('name', 'LIKE', '%cash%')->first();
+                    $paymentMethodId = $pm ? $pm->id : 2;
+                }
+            }
 
             Expense::create([
                 'user_id' => Auth::user()->id,
                 'date' => $request['expense']['date'],
                 'Ref' => $this->getNumberOrder(),
-                'payment_method_id' => $request['expense']['payment_method_id'],
+                'payment_method_id' => $paymentMethodId,
                 'warehouse_id' => $request['expense']['warehouse_id'],
                 'expense_category_id' => $request['expense']['category_id'],
-                'account_id' => $request['expense']['account_id'],
+                'account_id' => $accountId,
                 'details' => $request['expense']['details'],
                 'amount' => $request['expense']['amount'],
             ]);
 
-            $account = Account::find($request['expense']['account_id']);
+            $account = Account::find($accountId);
 
             if ($account) {
                 $account->update([
@@ -326,10 +345,38 @@ class ExpensesController extends BaseController
 
     // ------------ function show -----------\\
 
-    public function show($id)
+    public function show(Request $request, $id)
     {
-        //
+        $this->authorizeForUser($request->user('api'), 'view', Expense::class);
+        $user = Auth::user();
+        $view_records = $user->hasRecordView();
+        $expense = Expense::with(['warehouse:id,name', 'expense_category:id,name', 'account:id,account_name,account_num', 'payment_method', 'user:id,username'])->whereNull('deleted_at')->findOrFail($id);
 
+        if (! $view_records) {
+            $this->authorizeForUser($request->user('api'), 'check_record', $expense);
+        }
+
+        $pmName = 'Cash';
+        if ($expense->payment_method) {
+            $pmName = $expense->payment_method->title ?? $expense->payment_method->name ?? 'Cash';
+        }
+
+        return response()->json([
+            'expense' => [
+                'id' => $expense->id,
+                'Ref' => $expense->Ref,
+                'date' => $expense->date,
+                'amount' => (float) $expense->amount,
+                'details' => $expense->details,
+                'warehouse_name' => $expense->warehouse ? $expense->warehouse->name : '-',
+                'category_name' => $expense->expense_category ? $expense->expense_category->name : '-',
+                'account_name' => $expense->account ? $expense->account->account_name : '-',
+                'account_num' => $expense->account ? $expense->account->account_num : '-',
+                'payment_method' => $pmName,
+                'user_name' => $expense->user ? $expense->user->username : '-',
+                'created_at' => $expense->created_at ? $expense->created_at->format('Y-m-d H:i') : null,
+            ],
+        ]);
     }
 
     // -------------- Update  Expense -----------\\
@@ -357,8 +404,20 @@ class ExpensesController extends BaseController
                 'expense.category_id' => 'required',
                 'expense.details' => 'required',
                 'expense.amount' => 'required',
-                'expense.payment_method_id' => 'required',
             ]);
+
+            $accountId = $request['expense']['account_id'] ?? null;
+            $paymentMethodId = $request['expense']['payment_method_id'] ?? null;
+            if (! $paymentMethodId) {
+                $acc = Account::find($accountId);
+                if ($acc && (stripos($acc->account_name, 'bank') !== false || stripos($acc->account_name, 'ubl') !== false || stripos($acc->account_name, 'meezan') !== false)) {
+                    $pm = PaymentMethod::whereNull('deleted_at')->where('name', 'LIKE', '%bank%')->first();
+                    $paymentMethodId = $pm ? $pm->id : 1;
+                } else {
+                    $pm = PaymentMethod::whereNull('deleted_at')->where('name', 'LIKE', '%cash%')->first();
+                    $paymentMethodId = $pm ? $pm->id : 2;
+                }
+            }
 
             $account = Account::find($expense->account_id);
 
@@ -370,10 +429,10 @@ class ExpensesController extends BaseController
 
             Expense::whereId($id)->update([
                 'date' => $request['expense']['date'],
-                'payment_method_id' => $request['expense']['payment_method_id'],
+                'payment_method_id' => $paymentMethodId,
                 'warehouse_id' => $request['expense']['warehouse_id'],
                 'expense_category_id' => $request['expense']['category_id'],
-                'account_id' => $request['expense']['account_id'] ? $request['expense']['account_id'] : null,
+                'account_id' => $accountId ? $accountId : null,
                 'details' => $request['expense']['details'],
                 'amount' => $request['expense']['amount'],
             ]);
@@ -497,15 +556,34 @@ class ExpensesController extends BaseController
             $warehouses = Warehouse::where('deleted_at', '=', null)->whereIn('id', $warehouses_id)->get(['id', 'name']);
         }
 
-        $Expenses_category = ExpenseCategory::where('deleted_at', '=', null)->get(['id', 'name']);
+        $Expenses_category = ExpenseCategory::with('chartOfAccount:id,code,name')->where('deleted_at', '=', null)->get(['id', 'name', 'coa_id']);
         $accounts = Account::where('deleted_at', '=', null)->get(['id', 'account_name']);
         $payment_methods = PaymentMethod::where('deleted_at', '=', null)->get(['id', 'name']);
+
+        $settings = \App\Models\Setting::whereNull('deleted_at')->first();
+        $defaultAccount = null;
+        if ($settings && $settings->default_account_id) {
+            $defaultAccount = Account::whereNull('deleted_at')->find($settings->default_account_id);
+        }
+        if (! $defaultAccount) {
+            $defaultAccount = Account::whereNull('deleted_at')->where('account_name', 'LIKE', '%cash%')->first();
+        }
+        if (! $defaultAccount) {
+            $defaultAccount = Account::whereNull('deleted_at')->first();
+        }
+
+        $defaultPaymentMethod = PaymentMethod::whereNull('deleted_at')->where('name', 'LIKE', '%cash%')->first();
+        if (! $defaultPaymentMethod) {
+            $defaultPaymentMethod = PaymentMethod::whereNull('deleted_at')->first();
+        }
 
         return response()->json([
             'Expenses_category' => $Expenses_category,
             'warehouses' => $warehouses,
             'accounts' => $accounts,
             'payment_methods' => $payment_methods,
+            'default_account_id' => $defaultAccount ? $defaultAccount->id : null,
+            'default_payment_method_id' => $defaultPaymentMethod ? $defaultPaymentMethod->id : null,
         ]);
     }
 
@@ -577,7 +655,7 @@ class ExpensesController extends BaseController
             $warehouses = Warehouse::where('deleted_at', '=', null)->whereIn('id', $warehouses_id)->get(['id', 'name']);
         }
 
-        $Expenses_category = ExpenseCategory::where('deleted_at', '=', null)->get(['id', 'name']);
+        $Expenses_category = ExpenseCategory::with('chartOfAccount:id,code,name')->where('deleted_at', '=', null)->get(['id', 'name', 'coa_id']);
         $accounts = Account::where('deleted_at', '=', null)->get(['id', 'account_name']);
         $payment_methods = PaymentMethod::where('deleted_at', '=', null)->get(['id', 'name']);
 

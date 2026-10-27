@@ -109,6 +109,12 @@
                       <span :class="getPaymentBadgeClass(sale.payment_status)">{{sale.payment_status}}</span>
                     </td>
                   </tr>
+                  <tr v-if="sale.account_name && sale.account_name !== '---'">
+                    <td class="invoice-meta-label">{{ $t('Account') || 'Account' }}:</td>
+                    <td class="invoice-meta-value">
+                      <span class="badge badge-success px-2 py-1 font-weight-bold">{{sale.account_name}}</span>
+                    </td>
+                  </tr>
                   <tr v-if="sale.panel_id">
                     <td class="invoice-meta-label">Panel ID:</td>
                     <td class="invoice-meta-value">{{sale.panel_id}}</td>
@@ -302,6 +308,35 @@
             </tr>
           </table>
 
+          <!-- Payments Received -->
+          <div v-if="payments && payments.length > 0" class="invoice-payments-section mt-4 mb-3">
+            <div class="invoice-box-header mb-2 font-weight-bold text-uppercase small text-muted" style="letter-spacing: 0.5px;">
+              {{ $t('Payments_Received') || 'Payments Received' }}
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered text-left mb-0">
+                <thead class="bg-light">
+                  <tr>
+                    <th>{{ $t('date') }}</th>
+                    <th>{{ $t('Reference') }}</th>
+                    <th>{{ $t('PaymentMethod') }}</th>
+                    <th>{{ $t('Account') }}</th>
+                    <th class="text-right">{{ $t('Amount') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(p, idx) in payments" :key="idx">
+                    <td>{{ p.date }}</td>
+                    <td>{{ p.Ref }}</td>
+                    <td><span class="badge badge-light border">{{ p.payment_method }}</span></td>
+                    <td><strong class="text-success">{{ p.account_name }}</strong></td>
+                    <td class="text-right font-weight-bold">{{ formatPriceWithSymbol(currentUser && currentUser.currency, p.montant, 2) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           <!-- Footer -->
           <div class="invoice-footer">
             <div v-if="company.is_invoice_footer && company.invoice_footer" class="invoice-footer-text">
@@ -391,6 +426,7 @@ export default {
       isLoading: true,
       sale: {},
       details: [],
+      payments: [],
       variants: [],
       company: {},
       email: {
@@ -696,6 +732,7 @@ export default {
           this.sale = response.data.sale;
           this.details = response.data.details;
           this.company = response.data.company;
+          this.payments = response.data.payments || (response.data.sale && response.data.sale.payments) || [];
           this.isLoading = false;
         })
         .catch(response => {

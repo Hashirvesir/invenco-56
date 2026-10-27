@@ -60,7 +60,12 @@
         </div>
 
         <template slot="table-row" slot-scope="props">
-          <span v-if="props.column.field == 'date'">
+          <span v-if="props.column.field == 'Ref'">
+            <router-link :to="'/app/expenses/detail/' + props.row.id" class="text-primary font-weight-bold" :title="'View Details'">
+              {{ props.row.Ref }}
+            </router-link>
+          </span>
+          <span v-else-if="props.column.field == 'date'">
             {{ formatDisplayDate(props.row.date) }}
           </span>
           <span v-else-if="props.column.field == 'documents'">
@@ -70,6 +75,14 @@
             <span v-else class="text-muted">-</span>
           </span>
           <span v-else-if="props.column.field == 'actions'">
+            <router-link
+              title="View Detail"
+              class="cursor-pointer mr-2"
+              v-b-tooltip.hover
+              :to="'/app/expenses/detail/' + props.row.id"
+            >
+              <lucide-icon class="text-20 text-primary" name="eye" />
+            </router-link>
             <a
               title="Attach Documents"
               class="cursor-pointer mr-2"

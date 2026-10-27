@@ -99,6 +99,13 @@
             >{{$t('partial')}}</span>
             <span v-else class="badge badge-outline-warning">{{$t('Unpaid')}}</span>
           </div>
+          <div v-else-if="props.column.field == 'account_name'">
+            <span
+              v-if="props.row.account_name && props.row.account_name !== '---'"
+              class="badge badge-outline-success font-weight-bold"
+            >{{props.row.account_name}}</span>
+            <span v-else class="text-muted">---</span>
+          </div>
           <span v-else-if="props.column.field === 'Ref' && props.row.id">
             <router-link :to="{ name: 'detail_sale', params: { id: props.row.id } }" class="text-primary">
               {{ props.formattedRow[props.column.field] }}
@@ -381,6 +388,13 @@ components: { DateRangePicker },
           field: "payment_status",
           tdClass: "text-left",
           thClass: "text-left"
+        },
+        {
+          label: this.$t("Account") || "Account",
+          field: "account_name",
+          tdClass: "text-left",
+          thClass: "text-left",
+          sortable: false
         },
         {
           label: this.$t("AddedBy"),

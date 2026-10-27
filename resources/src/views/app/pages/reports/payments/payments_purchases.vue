@@ -115,6 +115,12 @@
                 {{ props.formattedRow[props.column.field] }}
               </router-link>
             </span>
+            <span v-else-if="props.column.field === 'account_name'">
+              <span v-if="props.row.account_name && props.row.account_name !== '---'" class="badge badge-outline-success font-weight-bold">
+                {{ props.row.account_name }}
+              </span>
+              <span v-else class="text-muted">---</span>
+            </span>
             <span v-else>{{ props.formattedRow[props.column.field] }}</span>
           </template>
         </vue-good-table>

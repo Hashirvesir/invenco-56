@@ -95,7 +95,7 @@ class SalesController extends BaseController
         $data = [];
 
         // Check If User Has Permission View  All Records
-        $Sales = Sale::with('facture', 'client', 'warehouse', 'user')
+        $Sales = Sale::with('facture.account', 'client', 'warehouse', 'user')
             ->where('deleted_at', '=', null)
             ->where(function ($query) use ($view_records) {
                 if (! $view_records) {
@@ -123,6 +123,11 @@ class SalesController extends BaseController
                         ->orWhere(function ($query) use ($request) {
                             return $query->whereHas('warehouse', function ($q) use ($request) {
                                 $q->where('name', 'LIKE', "%{$request->search}%");
+                            });
+                        })
+                        ->orWhere(function ($query) use ($request) {
+                            return $query->whereHas('facture.account', function ($q) use ($request) {
+                                $q->where('account_name', 'LIKE', "%{$request->search}%");
                             });
                         });
                 });
@@ -159,6 +164,10 @@ class SalesController extends BaseController
             $item['paid_amount'] = number_format($Sale['paid_amount'], 2, '.', '');
             $item['due'] = number_format($item['GrandTotal'] - $item['paid_amount'], 2, '.', '');
             $item['payment_status'] = $Sale['payment_statut'];
+            $accNames = $Sale->facture ? $Sale->facture->map(function ($p) {
+                return $p->account ? $p->account->account_name : null;
+            })->filter()->unique()->values() : collect();
+            $item['account_name'] = $accNames->isNotEmpty() ? $accNames->implode(', ') : '---';
 
             if (SaleReturn::where('sale_id', $Sale['id'])->where('deleted_at', '=', null)->exists()) {
                 $sellReturn = SaleReturn::where('sale_id', $Sale['id'])->where('deleted_at', '=', null)->first();
@@ -348,7 +357,7 @@ class SalesController extends BaseController
                             'sale_id' => $order->id,
                             'Ref' => app('App\Http\Controllers\PaymentSalesController')->getNumberOrder(),
                             'date' => Carbon::now(),
-                            'account_id' => $request->payment['account_id'] ? $request->payment['account_id'] : null,
+                            'account_id' => ! empty($request->payment['account_id']) ? $request->payment['account_id'] : ((\App\Models\Setting::whereNull('deleted_at')->value('default_account_id')) ?: \App\Models\Account::whereNull('deleted_at')->where('account_name', 'LIKE', '%cash%')->value('id')),
                             'payment_method_id' => $request->payment['payment_method_id'],
                             'montant' => $request['amount'],
                             'change' => $request['change'],
@@ -1286,6 +1295,28 @@ class SalesController extends BaseController
         $sale_details['discount_from_points'] = $sale_data->discount_from_points ?? 0;
         $sale_details['panel_id'] = $sale_data->panel_id ?? '';
 
+        // Load payments with accounts
+        $payments = PaymentSale::with(['account', 'payment_method'])
+            ->where('sale_id', $id)
+            ->whereNull('deleted_at')
+            ->get();
+
+        $accountNames = $payments->map(function ($p) {
+            return $p->account ? $p->account->account_name : null;
+        })->filter()->unique()->values();
+
+        $sale_details['account_name'] = $accountNames->isNotEmpty() ? $accountNames->implode(', ') : '---';
+        $sale_details['payments'] = $payments->map(function ($p) {
+            return [
+                'id' => $p->id,
+                'Ref' => $p->Ref,
+                'date' => $p->date,
+                'montant' => $p->montant,
+                'account_name' => $p->account ? $p->account->account_name : '---',
+                'payment_method' => $p->payment_method ? ($p->payment_method->title ?? $p->payment_method->name) : 'Cash',
+            ];
+        });
+
         if (SaleReturn::where('sale_id', $id)->where('deleted_at', '=', null)->exists()) {
             $sellReturn = SaleReturn::where('sale_id', $id)->where('deleted_at', '=', null)->first();
             $sale_details['salereturn_id'] = $sellReturn->id;
@@ -1366,6 +1397,7 @@ class SalesController extends BaseController
             'details' => $details,
             'sale' => $sale_details,
             'company' => $company,
+            'payments' => $sale_details['payments'],
         ]);
 
     }

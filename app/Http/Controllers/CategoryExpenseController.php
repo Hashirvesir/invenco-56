@@ -45,13 +45,21 @@ class CategoryExpenseController extends BaseController
         if ($perPage == '-1') {
             $perPage = $totalRows;
         }
-        $ExpenseCategory = $ExpenseCategory->offset($offSet)
+        $ExpenseCategory = $ExpenseCategory->with('chartOfAccount:id,code,name')
+            ->offset($offSet)
             ->limit($perPage)
             ->orderBy($order, $dir)
             ->get();
 
+        $expenseAccounts = \Illuminate\Support\Facades\DB::table('acc_chart_of_accounts')
+            ->where('type', 'expense')
+            ->select('id', 'code', 'name')
+            ->orderBy('code')
+            ->get();
+
         return response()->json([
             'Expenses_category' => $ExpenseCategory,
+            'expense_accounts' => $expenseAccounts,
             'totalRows' => $totalRows,
         ]);
 
@@ -71,6 +79,7 @@ class CategoryExpenseController extends BaseController
             'user_id' => Auth::user()->id,
             'description' => $request['description'],
             'name' => $request['name'],
+            'coa_id' => $request['coa_id'] ?: null,
         ]);
 
         return response()->json(['success' => true], 200);
@@ -108,6 +117,7 @@ class CategoryExpenseController extends BaseController
         $ExpenseCategory->update([
             'name' => $request['name'],
             'description' => $request['description'],
+            'coa_id' => $request->has('coa_id') ? ($request['coa_id'] ?: null) : $ExpenseCategory->coa_id,
         ]);
 
         return response()->json(['success' => true], 200);

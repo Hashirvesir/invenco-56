@@ -24,6 +24,10 @@
         styleClass="table-hover tableOne vgt-table"
       >
         <div slot="table-actions" class="mt-2 mb-3">
+          <b-button variant="outline-info ripple m-1" size="sm" v-b-toggle.sidebar-right>
+            <lucide-icon name="filter" />
+            {{ $t("Filter") }}
+          </b-button>
           <b-button @click="openCreate()" class="btn-rounded" variant="btn btn-primary btn-icon m-1">
             <lucide-icon name="plus" />
             {{ $t('Add') }}
@@ -42,11 +46,11 @@
               <lucide-icon class="text-25 text-success cursor-pointer mr-2" name="check" v-if="postingId!==props.row.id" />
               <span v-else class="spinner-border spinner-border-sm text-success mr-2"></span>
             </a>
-            <a v-if="props.row.status!=='posted'" @click="tryEdit(props.row)" :title="$t('Edit')" v-b-tooltip.hover>
+            <a v-if="props.row.status!=='posted'" @click="tryEdit(props.row)" :title="$t('Edit')" v-b-tooltip.hover class="cursor-pointer mr-2">
               <lucide-icon class="text-25 text-primary" name="pencil" />
             </a>
-            <a v-if="props.row.status!=='posted'" @click="tryDelete(props.row)" :title="$t('Delete')" v-b-tooltip.hover>
-              <lucide-icon class="text-25 text-danger" name="x" />
+            <a @click="tryDelete(props.row)" :title="$t('Delete')" v-b-tooltip.hover class="cursor-pointer">
+              <lucide-icon class="text-25 text-danger" name="trash-2" />
             </a>
           </span>
         </template>
@@ -154,6 +158,81 @@
         </div>
       </div>
     </div>
+
+    <!-- Sidebar Filter -->
+    <b-sidebar id="sidebar-right" :title="$t('Filter')" bg-variant="white" right shadow>
+      <div class="px-3 py-2">
+        <b-row>
+          <!-- Date From -->
+          <b-col md="12">
+            <b-form-group :label="$t('From_Date') || 'From Date'">
+              <b-form-input type="date" v-model="filter.from"></b-form-input>
+            </b-form-group>
+          </b-col>
+
+          <!-- Date To -->
+          <b-col md="12">
+            <b-form-group :label="$t('To_Date') || 'To Date'">
+              <b-form-input type="date" v-model="filter.to"></b-form-input>
+            </b-form-group>
+          </b-col>
+
+          <!-- Status -->
+          <b-col md="12">
+            <b-form-group :label="$t('Status')">
+              <select v-model="filter.status" class="form-control">
+                <option value="">{{ $t('All') || 'All Statuses' }}</option>
+                <option value="posted">{{ $t('Posted') || 'Posted' }}</option>
+                <option value="draft">{{ $t('Draft') || 'Draft' }}</option>
+              </select>
+            </b-form-group>
+          </b-col>
+
+          <!-- Source / Reference Type -->
+          <b-col md="12">
+            <b-form-group :label="$t('Source') || 'Source / Type'">
+              <select v-model="filter.reference_type" class="form-control">
+                <option value="">{{ $t('All') || 'All Sources' }}</option>
+                <option value="manual">Manual Entry</option>
+                <option value="sale">Sale Invoice</option>
+                <option value="purchase">Purchase</option>
+                <option value="expense">Expense</option>
+                <option value="sale_return">Sale Return</option>
+                <option value="purchase_return">Purchase Return</option>
+                <option value="payment_sale">Payment (Sale)</option>
+                <option value="payment_purchase">Payment (Purchase)</option>
+              </select>
+            </b-form-group>
+          </b-col>
+
+          <!-- Account Filter -->
+          <b-col md="12">
+            <b-form-group :label="$t('Account')">
+              <v-select
+                v-model="filter.coa_id"
+                :reduce="a => a.value"
+                :options="accounts.map(a => ({label: a.code + ' - ' + a.name, value: a.id}))"
+                :placeholder="$t('Select_Account')"
+                :clearable="true"
+              />
+            </b-form-group>
+          </b-col>
+
+          <b-col md="6" sm="12" class="mt-2">
+            <b-button @click="applyFilter()" variant="primary ripple m-1" size="sm" block>
+              <lucide-icon name="filter" />
+              {{ $t("Filter") }}
+            </b-button>
+          </b-col>
+          <b-col md="6" sm="12" class="mt-2">
+            <b-button @click="resetFilter()" variant="danger ripple m-1" size="sm" block>
+              <lucide-icon name="power" />
+              {{ $t("Reset") }}
+            </b-button>
+          </b-col>
+        </b-row>
+      </div>
+    </b-sidebar>
   </div>
 </template>
 
@@ -188,6 +267,13 @@ export default {
       btnLoading: false,
       postingId: null,
       showErrors: false,
+      filter: {
+        from: "",
+        to: "",
+        status: "",
+        reference_type: "",
+        coa_id: null
+      },
     };
   },
   computed: {
@@ -220,13 +306,19 @@ export default {
     onSearch(value) { this.search = value.searchTerm; this.Get_Journals(this.serverParams.page); },
     async Get_Journals(page) {
       NProgress.start(); NProgress.set(0.1);
-      axios.get(
-        "/accounting/v2/journal-entries?page=" + page +
-        "&SortField=" + this.serverParams.sort.field +
-        "&SortType=" + this.serverParams.sort.type +
-        "&search=" + this.search +
-        "&limit=" + this.limit
-      )
+      const params = {
+        page: page,
+        SortField: this.serverParams.sort.field,
+        SortType: this.serverParams.sort.type,
+        search: this.search || '',
+        limit: this.limit,
+        from: this.filter.from || '',
+        to: this.filter.to || '',
+        status: this.filter.status || '',
+        reference_type: this.filter.reference_type || '',
+        coa_id: this.filter.coa_id || ''
+      };
+      axios.get("/accounting/v2/journal-entries", { params })
       .then(({data}) => {
         // paginator shape (data, total) or custom
         this.rows = (data && (data.data || data.rows || [])) || [];
@@ -234,6 +326,22 @@ export default {
         NProgress.done(); this.isLoading = false;
       })
       .catch(() => { NProgress.done(); this.isLoading = false; });
+    },
+    applyFilter() {
+      this.updateParams({ page: 1 });
+      this.Get_Journals(1);
+    },
+    resetFilter() {
+      this.filter = {
+        from: "",
+        to: "",
+        status: "",
+        reference_type: "",
+        coa_id: null
+      };
+      this.search = "";
+      this.updateParams({ page: 1 });
+      this.Get_Journals(1);
     },
     async fetchAccounts() {
       try {
@@ -258,9 +366,22 @@ export default {
       this.showModal = true;
     },
     tryDelete(j) {
-      if (j.status === 'posted') return;
-      this.$swal({ title: this.$t('Delete'), text: this.$t('Delete_Draft_Entry_Question'), type: 'warning', showCancelButton: true, confirmButtonText: this.$t('Delete') })
-        .then(r => { if (r.value) this.remove(j); });
+      const isPosted = j.status === 'posted';
+      const text = isPosted
+        ? (this.$t('Delete_Posted_Entry_Warning') || 'This entry is posted. Deleting it will remove its debit and credit records from the account ledgers. Are you sure you want to delete?')
+        : (this.$t('Delete_Draft_Entry_Question') || 'Are you sure you want to delete this draft entry?');
+
+      this.$swal({
+        title: this.$t('Delete') || 'Delete',
+        text: text,
+        type: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: this.$t('Delete') || 'Delete'
+      }).then(r => {
+        if (r.value) this.remove(j);
+      });
     },
     addLine() { this.entry.lines.push({ coa_id: null, debit: 0, credit: 0, memo: "" }); },
     closeModal() { this.btnLoading = false; this.showErrors = false; this.showModal = false; },

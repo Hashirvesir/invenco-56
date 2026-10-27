@@ -25,6 +25,27 @@ class AccountingHelper
             if ($amount <= 0) {
                 return;
             }
+
+            $lines = [
+                ['coa_id' => $arCoaId,  'debit' => $amount, 'credit' => 0,       'memo' => 'Accounts Receivable'],
+                ['coa_id' => $revCoaId, 'debit' => 0,       'credit' => $amount, 'memo' => 'Sales Revenue'],
+            ];
+
+            // Calculate Cost of Goods Sold for this sale
+            $cogsAmount = (float) DB::table('sale_details as sd')
+                ->leftJoin('products as p', 'p.id', '=', 'sd.product_id')
+                ->leftJoin('product_variants as pv', 'pv.id', '=', 'sd.product_variant_id')
+                ->where('sd.sale_id', $sale->id)
+                ->selectRaw('SUM(sd.quantity * COALESCE(NULLIF(pv.cost, 0), p.cost, 0)) as cost')
+                ->value('cost');
+
+            if ($cogsAmount > 0) {
+                $cogsCoaId = self::getOrCreateCoa('5000-COGS', 'Cost of Goods Sold', 'expense');
+                $invCoaId = self::getOrCreateCoa('1200-INV', 'Inventory', 'asset');
+                $lines[] = ['coa_id' => $cogsCoaId, 'debit' => $cogsAmount, 'credit' => 0,          'memo' => 'Cost of Goods Sold'];
+                $lines[] = ['coa_id' => $invCoaId,  'debit' => 0,          'credit' => $cogsAmount, 'memo' => 'Inventory Relieved'];
+            }
+
             self::createBalancedEntry([
                 'journal' => [
                     'date' => self::dateFrom($sale->date ?? null),
@@ -32,10 +53,7 @@ class AccountingHelper
                     'reference_type' => 'sale',
                     'reference_id' => $sale->id ?? null,
                 ],
-                'lines' => [
-                    ['coa_id' => $arCoaId,  'debit' => $amount, 'credit' => 0,       'memo' => 'Accounts Receivable'],
-                    ['coa_id' => $revCoaId, 'debit' => 0,       'credit' => $amount, 'memo' => 'Sales Revenue'],
-                ],
+                'lines' => $lines,
             ]);
         });
     }
@@ -73,6 +91,27 @@ class AccountingHelper
             if ($amount <= 0) {
                 return;
             }
+
+            $lines = [
+                ['coa_id' => $retCoaId, 'debit' => $amount, 'credit' => 0,       'memo' => 'Sales Return'],
+                ['coa_id' => $arCoaId,  'debit' => 0,       'credit' => $amount, 'memo' => 'Reduce A/R'],
+            ];
+
+            // Calculate return cost
+            $returnCost = (float) DB::table('sale_return_details as srd')
+                ->leftJoin('products as p', 'p.id', '=', 'srd.product_id')
+                ->leftJoin('product_variants as pv', 'pv.id', '=', 'srd.product_variant_id')
+                ->where('srd.sale_return_id', $saleReturn->id)
+                ->selectRaw('SUM(srd.quantity * COALESCE(NULLIF(pv.cost, 0), p.cost, 0)) as cost')
+                ->value('cost');
+
+            if ($returnCost > 0) {
+                $cogsCoaId = self::getOrCreateCoa('5000-COGS', 'Cost of Goods Sold', 'expense');
+                $invCoaId = self::getOrCreateCoa('1200-INV', 'Inventory', 'asset');
+                $lines[] = ['coa_id' => $invCoaId,  'debit' => $returnCost, 'credit' => 0,           'memo' => 'Restock Returned Inventory'];
+                $lines[] = ['coa_id' => $cogsCoaId, 'debit' => 0,           'credit' => $returnCost, 'memo' => 'Reverse Cost of Goods Sold'];
+            }
+
             self::createBalancedEntry([
                 'journal' => [
                     'date' => self::dateFrom($saleReturn->date ?? null),
@@ -80,10 +119,7 @@ class AccountingHelper
                     'reference_type' => 'sale_return',
                     'reference_id' => $saleReturn->id ?? null,
                 ],
-                'lines' => [
-                    ['coa_id' => $retCoaId, 'debit' => $amount, 'credit' => 0,       'memo' => 'Sales Return'],
-                    ['coa_id' => $arCoaId,  'debit' => 0,       'credit' => $amount, 'memo' => 'Reduce A/R'],
-                ],
+                'lines' => $lines,
             ]);
         });
     }
@@ -185,7 +221,7 @@ class AccountingHelper
             if (! $cashCoaId) {
                 $cashCoaId = self::getOrCreateCoa('1000-CASH', 'Cash', 'asset');
             }
-            $expenseCoaId = self::getOrCreateCoa('EXP', 'Expenses', 'expense');
+            $expenseCoaId = self::resolveExpenseCoaId($expense);
             if ($delta > 0) {
                 self::createBalancedEntry([
                     'journal' => [
@@ -307,7 +343,7 @@ class AccountingHelper
             if (! $cashCoaId) {
                 $cashCoaId = self::getOrCreateCoa('1000-CASH', 'Cash', 'asset');
             }
-            $expenseCoaId = self::getOrCreateCoa('EXP', 'Expenses', 'expense');
+            $expenseCoaId = self::resolveExpenseCoaId($expense);
             $amount = (float) ($expense->amount ?? $expense->total ?? 0);
             if ($amount <= 0) {
                 return;
@@ -320,8 +356,8 @@ class AccountingHelper
                     'reference_id' => $expense->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $expenseCoaId, 'debit' => $amount, 'credit' => 0, 'memo' => 'Expense'],
-                    ['coa_id' => $cashCoaId,    'debit' => 0,      'credit' => $amount, 'memo' => 'Cash'],
+                    ['coa_id' => $expenseCoaId, 'account_id' => null, 'debit' => $amount, 'credit' => 0, 'memo' => 'Expense'],
+                    ['coa_id' => $cashCoaId,    'account_id' => $expense->account_id ?? null, 'debit' => 0, 'credit' => $amount, 'memo' => 'Paid from Account'],
                 ],
             ]);
         });
@@ -347,8 +383,8 @@ class AccountingHelper
                     'reference_id' => $payment->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $cashCoaId,   'debit' => $amount, 'credit' => 0, 'memo' => 'Cash In'],
-                    ['coa_id' => $arCoaId,     'debit' => 0,       'credit' => $amount, 'memo' => 'Clear A/R'],
+                    ['coa_id' => $cashCoaId, 'account_id' => $payment->account_id ?? null, 'debit' => $amount, 'credit' => 0, 'memo' => 'Payment In'],
+                    ['coa_id' => $arCoaId,   'account_id' => null, 'debit' => 0, 'credit' => $amount, 'memo' => 'Clear A/R'],
                 ],
             ]);
         });
@@ -374,8 +410,8 @@ class AccountingHelper
                     'reference_id' => $payment->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $apCoaId,   'debit' => $amount, 'credit' => 0, 'memo' => 'Reduce A/P'],
-                    ['coa_id' => $cashCoaId, 'debit' => 0,       'credit' => $amount, 'memo' => 'Cash Out'],
+                    ['coa_id' => $apCoaId,   'account_id' => null, 'debit' => $amount, 'credit' => 0, 'memo' => 'Reduce A/P'],
+                    ['coa_id' => $cashCoaId, 'account_id' => $payment->account_id ?? null, 'debit' => 0, 'credit' => $amount, 'memo' => 'Payment Out'],
                 ],
             ]);
         });
@@ -401,8 +437,8 @@ class AccountingHelper
                     'reference_id' => $payment->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $arCoaId,   'debit' => $amount, 'credit' => 0, 'memo' => 'Reinstate A/R'],
-                    ['coa_id' => $cashCoaId, 'debit' => 0,       'credit' => $amount, 'memo' => 'Cash Out'],
+                    ['coa_id' => $arCoaId,   'account_id' => null, 'debit' => $amount, 'credit' => 0, 'memo' => 'Reinstate A/R'],
+                    ['coa_id' => $cashCoaId, 'account_id' => $payment->account_id ?? null, 'debit' => 0, 'credit' => $amount, 'memo' => 'Payment Out'],
                 ],
             ]);
         });
@@ -428,8 +464,8 @@ class AccountingHelper
                     'reference_id' => $payment->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $cashCoaId, 'debit' => $amount, 'credit' => 0, 'memo' => 'Cash In'],
-                    ['coa_id' => $apCoaId,  'debit' => 0,       'credit' => $amount, 'memo' => 'Reinstate A/P'],
+                    ['coa_id' => $cashCoaId, 'account_id' => $payment->account_id ?? null, 'debit' => $amount, 'credit' => 0, 'memo' => 'Payment In'],
+                    ['coa_id' => $apCoaId,  'account_id' => null, 'debit' => 0, 'credit' => $amount, 'memo' => 'Reinstate A/P'],
                 ],
             ]);
         });
@@ -452,8 +488,8 @@ class AccountingHelper
                     'reference_id' => $deposit->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $cashCoaId,   'debit' => $amount, 'credit' => 0, 'memo' => 'Cash In'],
-                    ['coa_id' => $equityCoaId, 'debit' => 0,       'credit' => $amount, 'memo' => 'Equity'],
+                    ['coa_id' => $cashCoaId,   'account_id' => $deposit->account_id ?? null, 'debit' => $amount, 'credit' => 0, 'memo' => 'Deposit In'],
+                    ['coa_id' => $equityCoaId, 'account_id' => null, 'debit' => 0, 'credit' => $amount, 'memo' => 'Equity'],
                 ],
             ]);
         });
@@ -472,8 +508,10 @@ class AccountingHelper
     public static function fromTransferMoney($transfer): void
     {
         self::safe(function () use ($transfer) {
-            $fromCoaId = self::getOrCreateCoaForLegacyAccount($transfer->from_account_id ?? $transfer->account_from_id ?? null);
-            $toCoaId = self::getOrCreateCoaForLegacyAccount($transfer->to_account_id ?? $transfer->account_to_id ?? null);
+            $fromAccountId = $transfer->from_account_id ?? $transfer->account_from_id ?? null;
+            $toAccountId = $transfer->to_account_id ?? $transfer->account_to_id ?? null;
+            $fromCoaId = self::getOrCreateCoaForLegacyAccount($fromAccountId);
+            $toCoaId = self::getOrCreateCoaForLegacyAccount($toAccountId);
             $amount = (float) ($transfer->amount ?? 0);
             if ($amount <= 0 || ! $fromCoaId || ! $toCoaId) {
                 return;
@@ -486,8 +524,8 @@ class AccountingHelper
                     'reference_id' => $transfer->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $toCoaId,   'debit' => $amount, 'credit' => 0, 'memo' => 'To'],
-                    ['coa_id' => $fromCoaId, 'debit' => 0,      'credit' => $amount, 'memo' => 'From'],
+                    ['coa_id' => $toCoaId,   'account_id' => $toAccountId, 'debit' => $amount, 'credit' => 0, 'memo' => 'Transfer In'],
+                    ['coa_id' => $fromCoaId, 'account_id' => $fromAccountId, 'debit' => 0, 'credit' => $amount, 'memo' => 'Transfer Out'],
                 ],
             ]);
         });
@@ -631,8 +669,8 @@ class AccountingHelper
                     'reference_id' => $payment->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $arCoaId,   'debit' => $amount, 'credit' => 0,       'memo' => 'Settle Customer Credit'],
-                    ['coa_id' => $cashCoaId, 'debit' => 0,       'credit' => $amount, 'memo' => 'Cash Refunded'],
+                    ['coa_id' => $arCoaId,   'account_id' => null, 'debit' => $amount, 'credit' => 0,       'memo' => 'Settle Customer Credit'],
+                    ['coa_id' => $cashCoaId, 'account_id' => $payment->account_id ?? null, 'debit' => 0,       'credit' => $amount, 'memo' => 'Refund Paid'],
                 ],
             ]);
         });
@@ -658,8 +696,8 @@ class AccountingHelper
                     'reference_id' => $payment->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $cashCoaId, 'debit' => $amount, 'credit' => 0,       'memo' => 'Cash Reinstated'],
-                    ['coa_id' => $arCoaId,   'debit' => 0,       'credit' => $amount, 'memo' => 'Reinstate Customer Credit'],
+                    ['coa_id' => $cashCoaId, 'account_id' => $payment->account_id ?? null, 'debit' => $amount, 'credit' => 0,       'memo' => 'Refund Reinstated'],
+                    ['coa_id' => $arCoaId,   'account_id' => null, 'debit' => 0,       'credit' => $amount, 'memo' => 'Reinstate Customer Credit'],
                 ],
             ]);
         });
@@ -685,8 +723,8 @@ class AccountingHelper
                     'reference_id' => $payment->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $cashCoaId, 'debit' => $amount, 'credit' => 0,       'memo' => 'Cash Received'],
-                    ['coa_id' => $apCoaId,   'debit' => 0,       'credit' => $amount, 'memo' => 'Settle Supplier Credit'],
+                    ['coa_id' => $cashCoaId, 'account_id' => $payment->account_id ?? null, 'debit' => $amount, 'credit' => 0,       'memo' => 'Supplier Refund Received'],
+                    ['coa_id' => $apCoaId,   'account_id' => null, 'debit' => 0,       'credit' => $amount, 'memo' => 'Settle Supplier Credit'],
                 ],
             ]);
         });
@@ -712,8 +750,8 @@ class AccountingHelper
                     'reference_id' => $payment->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $apCoaId,   'debit' => $amount, 'credit' => 0,       'memo' => 'Reinstate Supplier Credit'],
-                    ['coa_id' => $cashCoaId, 'debit' => 0,       'credit' => $amount, 'memo' => 'Cash Reversed'],
+                    ['coa_id' => $apCoaId,   'account_id' => null, 'debit' => $amount, 'credit' => 0,       'memo' => 'Reinstate Supplier Credit'],
+                    ['coa_id' => $cashCoaId, 'account_id' => $payment->account_id ?? null, 'debit' => 0,       'credit' => $amount, 'memo' => 'Refund Reversed'],
                 ],
             ]);
         });
@@ -809,6 +847,44 @@ class AccountingHelper
                 'updated_at' => Carbon::now(),
             ]);
         });
+    }
+
+    public static function resolveExpenseCoaId($expense): int
+    {
+        $categoryId = $expense->expense_category_id ?? $expense->category_id ?? null;
+        if ($categoryId) {
+            $cat = DB::table('expense_categories')->where('id', $categoryId)->first();
+            if ($cat) {
+                if (!empty($cat->coa_id)) {
+                    $exists = DB::table('acc_chart_of_accounts')->where('id', $cat->coa_id)->exists();
+                    if ($exists) {
+                        return (int) $cat->coa_id;
+                    }
+                }
+
+                $name = strtolower(trim($cat->name ?? ''));
+                if (str_contains($name, 'rent')) {
+                    return self::getOrCreateCoa('6010-RENT', 'Rent Expense', 'expense');
+                }
+                if (str_contains($name, 'bill') || str_contains($name, 'electric') || str_contains($name, 'water') || str_contains($name, 'util')) {
+                    return self::getOrCreateCoa('6020-UTIL', 'Utilities Expense', 'expense');
+                }
+                if (str_contains($name, 'salry') || str_contains($name, 'salary') || str_contains($name, 'wage')) {
+                    return self::getOrCreateCoa('6030-SAL', 'Salaries & Wages Expense', 'expense');
+                }
+                if (str_contains($name, 'repair') || str_contains($name, 'kiosk') || str_contains($name, 'maint')) {
+                    return self::getOrCreateCoa('6050-REP', 'Repair & Maintenance Expense', 'expense');
+                }
+                if (str_contains($name, 'marketing') || str_contains($name, 'advert') || preg_match('/\bad\b/', $name)) {
+                    return self::getOrCreateCoa('6060-MKT', 'Marketing & Advertising Expense', 'expense');
+                }
+                if (str_contains($name, 'lunch') || str_contains($name, 'tea') || str_contains($name, 'dinner') || str_contains($name, 'transport') || str_contains($name, 'other') || str_contains($name, 'sadqa') || str_contains($name, 'zakat')) {
+                    return self::getOrCreateCoa('6040-GEN', 'General & Administrative Expense', 'expense');
+                }
+            }
+        }
+
+        return self::getOrCreateCoa('EXP', 'Expenses', 'expense');
     }
 
     public static function getOrCreateCoa(string $code, string $name, string $type): int

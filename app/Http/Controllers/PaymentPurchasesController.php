@@ -182,7 +182,7 @@ class PaymentPurchasesController extends BaseController
 
                 PaymentPurchase::create([
                     'purchase_id' => $request['purchase_id'],
-                    'account_id' => $request['account_id'] ? $request['account_id'] : null,
+                    'account_id' => ! empty($request['account_id']) ? $request['account_id'] : ((\App\Models\Setting::whereNull('deleted_at')->value('default_account_id')) ?: \App\Models\Account::whereNull('deleted_at')->where('account_name', 'LIKE', '%cash%')->value('id')),
                     'Ref' => $this->getNumberOrder(),
                     'date' => $request['date'],
                     'payment_method_id' => $request['payment_method_id'],

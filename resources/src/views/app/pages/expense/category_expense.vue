@@ -20,8 +20,13 @@
         :pagination-options="{
         enabled: true,
         mode: 'records',
+        perPage: 50,
+        position: 'bottom',
+        perPageDropdown: [10, 25, 50, 100],
+        dropdownAllowAll: false,
         nextLabel: 'next',
         prevLabel: 'prev',
+        rowsPerPageLabel: 'Rows per page',
       }"
         styleClass="tableOne table-hover vgt-table"
       >
@@ -41,7 +46,13 @@
         </div>
 
         <template slot="table-row" slot-scope="props">
-          <span v-if="props.column.field == 'actions'">
+          <span v-if="props.column.field == 'coa_name'">
+            <b-badge v-if="props.row.chart_of_account" variant="outline-primary" class="font-weight-bold">
+              {{ props.row.chart_of_account.code }} - {{ props.row.chart_of_account.name }}
+            </b-badge>
+            <span v-else class="text-muted small">-</span>
+          </span>
+          <span v-else-if="props.column.field == 'actions'">
             <a
               @click="Edit_Category(props.row)"
               v-if="currentUserPermissions && currentUserPermissions.includes('expense_edit')"
@@ -93,12 +104,24 @@
               <b-form-group :label="$t('Description')">
                 <textarea
                   v-model="category.description"
-                  rows="4"
+                  rows="3"
                   name="Description"
                   id="Description"
                   class="form-control"
                   :placeholder="$t('Afewwords')"
                 ></textarea>
+              </b-form-group>
+            </b-col>
+
+            <!-- Chart of Account (COA) -->
+            <b-col md="12">
+              <b-form-group :label="'Chart of Account (Accounting Ledger)'">
+                <v-select
+                  v-model="category.coa_id"
+                  :reduce="label => label.value"
+                  :placeholder="'Select Expense Account'"
+                  :options="expense_accounts.map(acc => ({label: acc.code + ' - ' + acc.name, value: acc.id}))"
+                />
               </b-form-group>
             </b-col>
            
@@ -134,18 +157,20 @@ export default {
           type: "desc"
         },
         page: 1,
-        perPage: 10
+        perPage: 50
       },
       selectedIds: [],
       totalRows: "",
       search: "",
       categories: [],
+      expense_accounts: [],
       editmode: false,
-      limit: "10",
+      limit: "50",
       category: {
         id: "",
         name: "",
-        description: ""
+        description: "",
+        coa_id: ""
       }
     };
   },
@@ -159,6 +184,13 @@ export default {
           field: "name",
           tdClass: "text-left",
           thClass: "text-left"
+        },
+        {
+          label: "Chart of Account",
+          field: "coa_name",
+          tdClass: "text-left",
+          thClass: "text-left",
+          sortable: false
         },
         {
           label: this.$t("Description"),
@@ -268,9 +300,13 @@ export default {
 
     //-------------------------- Show Modal (Edit Category) ----------------\\
     Edit_Category(cat) {
-      this.Get_Categories(this.serverParams.page);
       this.reset_Form();
-      this.category = cat;
+      this.category = {
+        id: cat.id,
+        name: cat.name,
+        description: cat.description,
+        coa_id: cat.coa_id || ""
+      };
       this.editmode = true;
       this.$bvModal.show("New_Category");
     },
@@ -280,7 +316,8 @@ export default {
       this.category = {
         id: "",
         name: "",
-        description: ""
+        description: "",
+        coa_id: ""
       };
     },
 
@@ -304,6 +341,9 @@ export default {
         )
         .then(response => {
           this.categories = response.data.Expenses_category;
+          if (response.data.expense_accounts) {
+            this.expense_accounts = response.data.expense_accounts;
+          }
           this.totalRows = response.data.totalRows;
           // Complete the animation of theprogress bar.
           NProgress.done();
@@ -324,7 +364,8 @@ export default {
       axios
         .post("expenses_category", {
           name: this.category.name,
-          description: this.category.description
+          description: this.category.description,
+          coa_id: this.category.coa_id
         })
         .then(response => {
           Fire.$emit("Create_Category_Expense");
@@ -348,7 +389,8 @@ export default {
       axios
         .put("expenses_category/" + this.category.id, {
           name: this.category.name,
-          description: this.category.description
+          description: this.category.description,
+          coa_id: this.category.coa_id
         })
         .then(response => {
           Fire.$emit("Create_Category_Expense");

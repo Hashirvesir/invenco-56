@@ -814,7 +814,8 @@ class ReportController extends BaseController
         ->with([
             'client:id,name,email,phone,code,adresse',
             'warehouse:id,name',
-            'user:id,username'
+            'user:id,username',
+            'facture.account:id,account_name',
         ])
         ->join('clients', 'sales.client_id', '=', 'clients.id')
         ->whereNull('sales.deleted_at')
@@ -903,6 +904,10 @@ class ReportController extends BaseController
         $item['due'] = $Sale['GrandTotal'] - $Sale['paid_amount'];
         $item['payment_status'] = $Sale['payment_statut'];
         $item['user_name'] = optional($Sale['user'])->username ?? '---';
+        $accNames = $Sale->facture ? $Sale->facture->map(function ($p) {
+            return $p->account ? $p->account->account_name : null;
+        })->filter()->unique()->values() : collect();
+        $item['account_name'] = $accNames->isNotEmpty() ? $accNames->implode(', ') : '---';
 
         // Compute pre-discount total and monetary discount amount
         $disc_val    = (float)($Sale->discount ?? 0);

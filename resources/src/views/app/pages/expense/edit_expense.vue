@@ -47,26 +47,8 @@
                   </validation-provider>
                 </b-col>
 
-                 <!-- Payment choice -->
+                <!-- Account -->
                 <b-col lg="4" md="6" sm="12">
-                  <validation-provider name="Payment choice" :rules="{ required: true}">
-                    <b-form-group slot-scope="{ valid, errors }" :label="$t('Paymentchoice')">
-                      <v-select
-                        :class="{'is-invalid': !!errors.length}"
-                        :state="errors[0] ? false : (valid ? true : null)"
-                        v-model="expense.payment_method_id"
-                        :reduce="label => label.value"
-                        :placeholder="$t('PleaseSelect')"
-                        :options="payment_methods.map(payment_methods => ({label: payment_methods.name, value: payment_methods.id}))"
-
-                      ></v-select>
-                      <b-form-invalid-feedback>{{ errors[0] }}</b-form-invalid-feedback>
-                    </b-form-group>
-                  </validation-provider>
-                </b-col>
-
-                  <!-- Account -->
-                  <b-col lg="4" md="6" sm="12">
                   <validation-provider name="Account">
                     <b-form-group slot-scope="{ valid, errors }" :label="$t('Account')">
                       <v-select
@@ -76,7 +58,26 @@
                         :reduce="label => label.value"
                         :placeholder="$t('Choose_Account')"
                         :options="accounts.map(accounts => ({label: accounts.account_name, value: accounts.id}))"
+                        @input="onAccountChange"
                       />
+                      <b-form-invalid-feedback>{{ errors[0] }}</b-form-invalid-feedback>
+                    </b-form-group>
+                  </validation-provider>
+                </b-col>
+
+                <!-- Payment choice -->
+                <b-col lg="4" md="6" sm="12">
+                  <validation-provider name="Payment choice" :rules="{ required: false}">
+                    <b-form-group slot-scope="{ valid, errors }" :label="$t('Paymentchoice')">
+                      <v-select
+                        :class="{'is-invalid': !!errors.length}"
+                        :state="errors[0] ? false : (valid ? true : null)"
+                        v-model="expense.payment_method_id"
+                        :reduce="label => label.value"
+                        :placeholder="$t('PleaseSelect')"
+                        :options="payment_methods.map(payment_methods => ({label: payment_methods.name, value: payment_methods.id}))"
+                        @input="onPaymentMethodChange"
+                      ></v-select>
                       <b-form-invalid-feedback>{{ errors[0] }}</b-form-invalid-feedback>
                     </b-form-group>
                   </validation-provider>
@@ -92,8 +93,8 @@
                         v-model="expense.category_id"
                         :reduce="label => label.value"
                         :placeholder="$t('Choose_Category')"
-                        :options="expense_Category.map(expense_Category => 
-                        ({label: expense_Category.name, value: expense_Category.id}))"
+                        :options="expense_Category.map(c => 
+                        ({label: c.chart_of_account ? c.name + ' (' + c.chart_of_account.name + ')' : c.name, value: c.id}))"
                       />
                       <b-form-invalid-feedback>{{ errors[0] }}</b-form-invalid-feedback>
                     </b-form-group>
@@ -241,6 +242,38 @@ export default {
           this.makeToast("danger", this.$t("InvalidData"), this.$t("Failed"));
           this.SubmitProcessing = false;
         });
+    },
+
+    //--------------------------------------- Smart Account & Payment Method Sync ------------------------------\\
+    onAccountChange(val) {
+      if (!val) return;
+      const acc = this.accounts.find(a => a.id === val);
+      if (!acc) return;
+      const name = (acc.account_name || '').toLowerCase();
+      if (name.includes('bank') || name.includes('ubl') || name.includes('meezan') || name.includes('hbl') || name.includes('mcb')) {
+        const bankMethod = this.payment_methods.find(pm => (pm.name || '').toLowerCase().includes('bank'));
+        if (bankMethod) this.expense.payment_method_id = bankMethod.id;
+      } else {
+        const cashMethod = this.payment_methods.find(pm => (pm.name || '').toLowerCase().includes('cash'));
+        if (cashMethod) this.expense.payment_method_id = cashMethod.id;
+      }
+    },
+
+    onPaymentMethodChange(val) {
+      if (!val) return;
+      const pm = this.payment_methods.find(p => p.id === val);
+      if (!pm) return;
+      const pmName = (pm.name || '').toLowerCase();
+      if (pmName.includes('cash')) {
+        const cashAcc = this.accounts.find(a => (a.account_name || '').toLowerCase().includes('cash'));
+        if (cashAcc) this.expense.account_id = cashAcc.id;
+      } else if (pmName.includes('bank')) {
+        const bankAcc = this.accounts.find(a => {
+          const n = (a.account_name || '').toLowerCase();
+          return n.includes('bank') || n.includes('ubl') || n.includes('meezan') || n.includes('hbl') || n.includes('mcb');
+        });
+        if (bankAcc) this.expense.account_id = bankAcc.id;
+      }
     },
 
     //---------------------------------------Get Expense Elements ------------------------------\\

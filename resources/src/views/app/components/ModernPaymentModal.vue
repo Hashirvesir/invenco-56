@@ -139,36 +139,73 @@
                             />
                           </div>
                         </div>
-                        <div class="input-field">
-                          <label class="field-label">{{$t('Account')}}</label>
-                          <select v-model="p.accountId" class="form-select">
-                            <option value="">{{$t('Select_Account')}}</option>
-                            <option v-for="a in resolvedAccounts" :key="a.id" :value="a.id">{{ a.account_name || a.name }}</option>
-                          </select>
-                        </div>
-                      <div class="form-group">
-                        <div class="payment-methods">
-                          <div
-                            v-for="m in resolvedPaymentMethods"
-                            :key="m.id"
-                            class="method-card"
-                            :class="{ selected: String(p.paymentMethodId) === String(m.id) }"
-                            @click="changePaymentMethod(p, m)"
-                          >
-                            <div class="method-content">
-                              <div class="method-icon-wrapper">
-                                <lucide-icon :name="m.icon" />
+                        <!-- Payment Methods Buttons -->
+                        <div class="form-group mb-3">
+                          <label class="field-label">{{$t('PaymentMethod') || 'Payment Method'}}</label>
+                          <div class="payment-methods">
+                            <div
+                              v-for="m in resolvedPaymentMethods"
+                              :key="m.id"
+                              class="method-card"
+                              :class="{ selected: String(p.paymentMethodId) === String(m.id) }"
+                              @click="changePaymentMethod(p, m)"
+                            >
+                              <div class="method-content">
+                                <div class="method-icon-wrapper">
+                                  <lucide-icon :name="m.icon" />
+                                </div>
+                                <span class="method-label">{{ m.name }}</span>
                               </div>
-                              <span class="method-label">{{ m.name }}</span>
-                            </div>
-                            <div v-if="String(p.paymentMethodId) === String(m.id)" class="selected-indicator">
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                              </svg>
+                              <div v-if="String(p.paymentMethodId) === String(m.id)" class="selected-indicator">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                                </svg>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
+
+                        <!-- Auto-routing indicator for Cash -->
+                        <div class="auto-account-badge mb-3 d-flex align-items-center" v-if="isLineCash(p)">
+                          <span class="badge badge-light-success p-2 d-inline-flex align-items-center font-weight-normal text-muted" style="border-radius: 8px; font-size: 12px; background: #ecfdf5; border: 1px solid #a7f3d0;">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;">
+                              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                            </svg>
+                            Deposit Destination: <strong class="text-success" style="margin-left: 4px;">{{ getSelectedAccountName(p) || 'Cash in Hand' }}</strong>
+                          </span>
+                        </div>
+
+                        <!-- Bank / Deposit Account Selector (Only shown for non-cash methods: Bank Transfer, etc.) -->
+                        <div class="form-group mb-3" v-if="!isLineCash(p)">
+                          <label class="field-label d-flex justify-content-between align-items-center">
+                            <span>{{$t('Deposit_Account') || 'Deposit Bank / Account'}}</span>
+                            <small class="text-muted" v-if="getSelectedAccountName(p)">
+                              Selected: <strong class="text-success">{{ getSelectedAccountName(p) }}</strong>
+                            </small>
+                          </label>
+                          <div class="payment-methods accounts-grid">
+                            <div
+                              v-for="a in bankAccounts"
+                              :key="a.id"
+                              class="method-card account-card"
+                              :class="{ selected: String(p.accountId) === String(a.id) }"
+                              @click="selectAccountForLine(p, a)"
+                            >
+                              <div class="method-content">
+                                <div class="method-icon-wrapper account-icon-wrapper">
+                                  <lucide-icon :name="getAccountIcon(a)" />
+                                </div>
+                                <span class="method-label">{{ a.account_name || a.name }}</span>
+                              </div>
+                              <div v-if="String(p.accountId) === String(a.id)" class="selected-indicator account-selected-indicator">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                                </svg>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       <!-- Per-line Credit Card Section -->
                       <div class="form-group" v-if="isLineCreditCard(p) && stripeKey">
                         <div class="credit-card-section">
@@ -377,6 +414,14 @@ export default {
     resolvedAccounts() {
       return this.accounts || [];
     },
+    bankAccounts() {
+      const list = this.resolvedAccounts || [];
+      const nonCash = list.filter(a => {
+        const name = ((a.account_name || a.name || '') + ' ' + (a.account_num || '')).toLowerCase();
+        return !name.includes('cash');
+      });
+      return nonCash.length > 0 ? nonCash : list;
+    },
     anyCreditCardUsed() {
       return (this.paymentLines || []).some(line => {
         const pm = this.resolvedPaymentMethods.find(m => String(m.id) === String(line.paymentMethodId));
@@ -435,6 +480,11 @@ export default {
       const pm = this.resolvedPaymentMethods.find(m => String(m.id) === String(line.paymentMethodId));
       return this.isCreditCardMethod(pm);
     },
+    isLineCash(line) {
+      if (!line) return false;
+      const pm = this.resolvedPaymentMethods.find(m => String(m.id) === String(line.paymentMethodId));
+      return this.isCashMethod(pm);
+    },
     changePaymentMethod(line, method) {
       // If attempting to select credit card without Stripe config, block and notify
       if (this.isCreditCardMethod(method) && !this.stripeKey) {
@@ -449,6 +499,24 @@ export default {
       line.paymentMethodId = method.id;
       const idx = (this.paymentLines || []).indexOf(line);
 
+      // Automatically link Cash payment method to Cash account in Chart of Accounts
+      if (this.isCashMethod(method)) {
+        const cashAcc = this.getCashAccount();
+        if (cashAcc) {
+          this.selectAccountForLine(line, cashAcc);
+        }
+      } else {
+        // If switching from Cash to Bank Transfer / other, auto-select first bank account if current is cash
+        const currentAcc = (this.resolvedAccounts || []).find(a => String(a.id) === String(line.accountId));
+        const currentIsCash = currentAcc && ((currentAcc.account_name || currentAcc.name || '') + ' ' + (currentAcc.account_num || '')).toLowerCase().includes('cash');
+        if (!line.accountId || currentIsCash) {
+          const firstBank = this.bankAccounts[0];
+          if (firstBank) {
+            this.selectAccountForLine(line, firstBank);
+          }
+        }
+      }
+
       if (this.isCreditCardMethod(method)) {
         // When a credit card method is selected, mount a Stripe Elements card input
         this.activeCardLineIndex = idx >= 0 ? idx : 0;
@@ -457,6 +525,40 @@ export default {
         // Clean up any existing card element if switching away from credit card
         this.destroyCardElementForLine(idx);
       }
+    },
+    selectAccountForLine(line, account) {
+      if (!line || !account) return;
+      this.$set ? this.$set(line, 'accountId', account.id) : (line.accountId = account.id);
+      this.paymentForm.accountId = account.id;
+    },
+    getSelectedAccountName(line) {
+      if (!line || !line.accountId) return '';
+      const acc = (this.resolvedAccounts || []).find(a => String(a.id) === String(line.accountId));
+      return acc ? (acc.account_name || acc.name || '') : '';
+    },
+    getAccountIcon(account) {
+      const name = ((account && (account.account_name || account.name)) || '').toLowerCase();
+      if (name.includes('cash')) return 'wallet';
+      if (name.includes('bank') || name.includes('ubl') || name.includes('meezan') || name.includes('hbl') || name.includes('mcb') || name.includes('allied') || name.includes('habib') || name.includes('faysal') || name.includes('askari') || name.includes('standard')) return 'landmark';
+      return 'credit-card';
+    },
+    isCashMethod(method) {
+      if (!method || !method.name) return false;
+      return method.name.trim().toLowerCase().includes('cash');
+    },
+    getCashAccount() {
+      const list = this.resolvedAccounts || [];
+      // Look for account with 'cash' in name or number (e.g. 'Cash in Hand', '1000-CASH')
+      let found = list.find(a => {
+        const name = ((a.account_name || a.name || '') + ' ' + (a.account_num || '')).toLowerCase();
+        return name.includes('cash');
+      });
+      if (found) return found;
+      if (this.defaultAccountId) {
+        found = list.find(a => String(a.id) === String(this.defaultAccountId));
+        if (found) return found;
+      }
+      return list[0] || null;
     },
     //------ Toast (mirror old POS behavior)
     makeToast(variant, msg, title) {
@@ -495,10 +597,16 @@ export default {
     },
     getDefaultAccountId() {
       const id = this.defaultAccountId;
-      if (id !== null && id !== undefined && id !== '') {
-        const list = this.resolvedAccounts || [];
+      const list = this.resolvedAccounts || [];
+      if (id !== null && id !== undefined && id !== '' && String(id) !== '0') {
         const found = list.find(a => a && String(a.id) === String(id));
         if (found) return String(found.id);
+      }
+      // Prefer cash account if available
+      const cashAcc = this.getCashAccount();
+      if (cashAcc) return String(cashAcc.id);
+      if (list.length > 0 && list[0] && list[0].id) {
+        return String(list[0].id);
       }
       return '';
     },
@@ -857,11 +965,11 @@ export default {
           payments: (this.paymentLines || []).map((l) => ({
             amount: Number(l.amount) || 0,
             payment_method_id: l.paymentMethodId,
-            account_id: l.accountId || this.paymentForm.accountId || null
+            account_id: l.accountId || this.paymentForm.accountId || this.getDefaultAccountId() || null
           })),
           send_email: this.sendEmail,
           send_sms: this.sendSMS,
-          account_id: this.paymentForm.accountId,
+          account_id: this.paymentForm.accountId || this.getDefaultAccountId() || null,
           payment_note: this.paymentNote || '',
           token: token && token.id ? token.id : null,
           is_new_credit_card: this.hasAnyNewCardToTokenize(),
@@ -982,15 +1090,15 @@ export default {
           notes: this.saleNote || (this.sale && this.sale.notes) || '',
           details: normalizedDetails,
           GrandTotal: this.grandTotal || this.paymentForm.amountDue || total,
-          // Multi-payment array including per-line account (no global)
+          // Multi-payment array including per-line account (with global fallback)
           payments: (this.paymentLines || []).map((l) => ({
             amount: Number(l.amount) || 0,
             payment_method_id: l.paymentMethodId,
-            account_id: l.accountId || null
+            account_id: l.accountId || this.paymentForm.accountId || this.getDefaultAccountId() || null
           })),
           send_email: this.sendEmail,
           send_sms: this.sendSMS,
-          // No global account_id
+          account_id: this.paymentForm.accountId || this.getDefaultAccountId() || null,
           payment_note: this.paymentNote || '',
           discount_from_points: this.discountFromPoints || 0,
           used_points: this.usedPoints || 0,
@@ -1743,6 +1851,48 @@ export default {
       width: 10px;
       height: 10px;
     }
+  }
+}
+
+/* Accounts Grid & Cards */
+.accounts-grid {
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)) !important;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px;
+  gap: 8px;
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+  }
+}
+
+.account-card {
+  min-height: 60px;
+  padding: 8px 6px;
+
+  &:hover {
+    border-color: #10b981;
+    background: rgba(16, 185, 129, 0.04);
+  }
+
+  &.selected {
+    border-color: #10b981;
+    background: rgba(16, 185, 129, 0.08);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.18);
+  }
+
+  .account-icon-wrapper {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    box-shadow: 0 2px 6px rgba(16, 185, 129, 0.25);
+  }
+
+  .account-selected-indicator {
+    background: #10b981;
   }
 }
 

@@ -1036,6 +1036,7 @@ Route::middleware(['auth:api', 'Is_Active', 'request.safety'])->group(function (
         // Chart of Accounts
         Route::get('coa', 'AccountingV2\\ChartOfAccountsController@index');
         Route::post('coa', 'AccountingV2\\ChartOfAccountsController@store');
+        Route::get('coa/{id}/ledger', 'AccountingV2\\ChartOfAccountsController@ledger');
         Route::put('coa/{id}', 'AccountingV2\\ChartOfAccountsController@update');
         Route::delete('coa/{id}', 'AccountingV2\\ChartOfAccountsController@destroy');
 

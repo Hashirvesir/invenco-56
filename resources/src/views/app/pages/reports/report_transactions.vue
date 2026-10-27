@@ -61,6 +61,12 @@
           <span v-else-if="props.column.field == 'montant'">
             {{ formatPriceWithSymbol(currentUser && currentUser.currency, props.row.montant, 2) }}
           </span>
+          <span v-else-if="props.column.field === 'account_name'">
+            <span v-if="props.row.account_name && props.row.account_name !== '---'" class="badge badge-outline-success font-weight-bold">
+              {{ props.row.account_name }}
+            </span>
+            <span v-else class="text-muted">---</span>
+          </span>
           <span v-else>{{ props.formattedRow[props.column.field] }}</span>
         </template>
         <div slot="table-actions" class="mt-2 mb-3">

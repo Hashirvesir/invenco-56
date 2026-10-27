@@ -33,8 +33,10 @@ class ReportsController extends Controller
 
         $base = DB::table('acc_journal_entry_lines as l')
             ->join('acc_journal_entries as j', 'j.id', '=', 'l.journal_entry_id')
-            ->leftJoin('acc_chart_of_accounts as c', 'c.id', '=', 'l.coa_id')
-            ->where('j.status', 'posted');
+            ->join('acc_chart_of_accounts as c', 'c.id', '=', 'l.coa_id')
+            ->where('j.status', 'posted')
+            ->whereNotNull('c.code')
+            ->whereNotNull('c.name');
         if ($from) {
             $base->where('j.date', '>=', $from);
         }
@@ -50,7 +52,14 @@ class ReportsController extends Controller
             });
         }
 
-        $grouped = $base->select('c.id as coa_id', 'c.code', 'c.name', 'c.type', DB::raw('SUM(l.debit) as debit'), DB::raw('SUM(l.credit) as credit'))
+        // Calculate true grand totals BEFORE applying select/groupBy to base builder
+        $baseTotals = clone $base;
+        $grandDebit = (float) $baseTotals->sum('l.debit');
+        $grandCredit = (float) (clone $baseTotals)->sum('l.credit');
+        $diff = round($grandDebit - $grandCredit, 2);
+
+        $grouped = (clone $base)
+            ->select('c.id as coa_id', 'c.code', 'c.name', 'c.type', DB::raw('SUM(l.debit) as debit'), DB::raw('SUM(l.credit) as credit'))
             ->groupBy('c.id', 'c.code', 'c.name', 'c.type');
 
         // total groups
@@ -66,6 +75,10 @@ class ReportsController extends Controller
         return response()->json([
             'data' => $rows,
             'totalRows' => $totalRows,
+            'grand_debit' => $grandDebit,
+            'grand_credit' => $grandCredit,
+            'difference' => $diff,
+            'is_balanced' => $diff == 0.0,
         ]);
     }
 
@@ -107,8 +120,13 @@ class ReportsController extends Controller
             });
         }
 
+        // Summary (calculated before groupBy to prevent aggregate grouping truncation)
+        $income = (float) ((clone $base)->where('c.type', 'income')->select(DB::raw('SUM(l.credit - l.debit) as amount'))->value('amount') ?? 0);
+        $expense = (float) ((clone $base)->where('c.type', 'expense')->select(DB::raw('SUM(l.debit - l.credit) as amount'))->value('amount') ?? 0);
+        $summary = ['income' => $income, 'expense' => $expense, 'net_profit' => $income - $expense];
+
         $amountExpr = "SUM(CASE WHEN c.type='income' THEN (l.credit - l.debit) ELSE (l.debit - l.credit) END)";
-        $grouped = $base->select('c.id as coa_id', 'c.code', 'c.name', 'c.type', DB::raw("$amountExpr as amount"))
+        $grouped = (clone $base)->select('c.id as coa_id', 'c.code', 'c.name', 'c.type', DB::raw("$amountExpr as amount"))
             ->groupBy('c.id', 'c.code', 'c.name', 'c.type');
 
         // Total rows (excluding zero-amount rows)
@@ -123,11 +141,6 @@ class ReportsController extends Controller
             ->skip(($page - 1) * $limit)
             ->take($limit)
             ->get();
-
-        // Summary
-        $income = (float) ((clone $base)->where('c.type', 'income')->select(DB::raw('SUM(l.credit - l.debit) as amount'))->value('amount') ?? 0);
-        $expense = (float) ((clone $base)->where('c.type', 'expense')->select(DB::raw('SUM(l.debit - l.credit) as amount'))->value('amount') ?? 0);
-        $summary = ['income' => $income, 'expense' => $expense, 'net_profit' => $income - $expense];
 
         return response()->json([
             'data' => $rows,
@@ -161,6 +174,31 @@ class ReportsController extends Controller
         $netIncome = (float) $income - (float) $expense;
         $equity = (float) $capital + $netIncome;
 
+        // Detailed account-by-account breakdown
+        $assetsList = (clone $base)
+            ->where('c.type', 'asset')
+            ->select('c.id', 'c.code', 'c.name', DB::raw('ROUND(SUM(l.debit - l.credit), 2) as amount'))
+            ->groupBy('c.id', 'c.code', 'c.name')
+            ->havingRaw('ROUND(SUM(l.debit - l.credit), 2) <> 0')
+            ->orderBy('c.code')
+            ->get();
+
+        $liabilitiesList = (clone $base)
+            ->where('c.type', 'liability')
+            ->select('c.id', 'c.code', 'c.name', DB::raw('ROUND(SUM(l.credit - l.debit), 2) as amount'))
+            ->groupBy('c.id', 'c.code', 'c.name')
+            ->havingRaw('ROUND(SUM(l.credit - l.debit), 2) <> 0')
+            ->orderBy('c.code')
+            ->get();
+
+        $equityList = (clone $base)
+            ->where('c.type', 'equity')
+            ->select('c.id', 'c.code', 'c.name', DB::raw('ROUND(SUM(l.credit - l.debit), 2) as amount'))
+            ->groupBy('c.id', 'c.code', 'c.name')
+            ->havingRaw('ROUND(SUM(l.credit - l.debit), 2) <> 0')
+            ->orderBy('c.code')
+            ->get();
+
         return response()->json([
             'date' => $to,
             'assets' => (float) $assets,
@@ -169,6 +207,11 @@ class ReportsController extends Controller
             'capital' => (float) $capital,
             'net_income' => $netIncome,
             'balance' => (float) $assets - ((float) $liabilities + $equity),
+            'assets_breakdown' => $assetsList,
+            'liabilities_breakdown' => $liabilitiesList,
+            'equity_breakdown' => $equityList,
+            'total_assets' => (float) $assets,
+            'total_liabilities_equity' => (float) ($liabilities + $equity),
         ]);
     }
 

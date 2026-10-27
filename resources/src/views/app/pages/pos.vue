@@ -4298,10 +4298,13 @@ export default {
             notes: this.sale.notes,
             details: this.buildSubmitDetails(),
             GrandTotal: this.GrandTotal,
-            payments: this.paymentLines,
+            payments: (this.paymentLines || []).map(p => ({
+              ...p,
+              account_id: p.account_id || this.selectedAccount || this.default_account_id || (this.accounts && this.accounts[0] ? this.accounts[0].id : null)
+            })),
             send_email: this.sendEmail,
             send_sms: this.sendSMS,
-            account_id: this.selectedAccount,
+            account_id: this.selectedAccount || this.default_account_id || (this.accounts && this.accounts[0] ? this.accounts[0].id : null),
             payment_note: this.globalPaymentNote || '',
             is_new_credit_card: this.is_new_credit_card,
             selectedCard: this.selectedCard,
@@ -4387,10 +4390,13 @@ export default {
             GrandTotal: this.GrandTotal,
             notes: this.sale.notes,
             panel_id: this.sale.panel_id || undefined,
-            payments: paymentsWithMethod,
+            payments: paymentsWithMethod.map(p => ({
+              ...p,
+              account_id: p.account_id || this.selectedAccount || this.default_account_id || (this.accounts && this.accounts[0] ? this.accounts[0].id : null)
+            })),
             send_email: this.sendEmail,
             send_sms: this.sendSMS,
-            account_id: this.selectedAccount,
+            account_id: this.selectedAccount || this.default_account_id || (this.accounts && this.accounts[0] ? this.accounts[0].id : null),
             payment_note: this.globalPaymentNote || "",
             is_new_credit_card: this.is_new_credit_card,
             selectedCard: this.selectedCard,
@@ -8590,12 +8596,13 @@ export default {
           NProgress.done();
           return;
         }
+        this.selectedAccount = this.default_account_id || (this.accounts && this.accounts[0] ? this.accounts[0].id : null);
         this.paymentLines = [{
           amount:          parseFloat(this.GrandTotal.toFixed(2)),
           payment_method_id:       2,
+          account_id:      this.selectedAccount,
         }];
         this.globalPaymentNote = '';
-        this.selectedAccount= null; 
         this.$bvModal.show("Add_Payment");
         // Complete the animation of theprogress bar.
         NProgress.done();

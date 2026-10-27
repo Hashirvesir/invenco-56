@@ -73,7 +73,17 @@
             <span v-else-if="props.column.field == 'amount'" class="text-right d-block font-weight-bold">{{ toMoney(props.row.totalValue) }}</span>
           </template>
           <template v-else>
-            <span v-if="props.column.field == 'amount'" class="text-right d-block">{{ toMoney(props.row.amount) }}</span>
+            <span v-if="props.column.field == 'code'">
+              <a @click.stop="$router.push({ name: 'accounting_v2_account_ledger', params: { id: props.row.coa_id } })" class="text-primary font-weight-bold cursor-pointer hover-underline" :title="'Open Account Ledger'">
+                {{ props.row.code }}
+              </a>
+            </span>
+            <span v-else-if="props.column.field == 'name'">
+              <a @click.stop="$router.push({ name: 'accounting_v2_account_ledger', params: { id: props.row.coa_id } })" class="text-dark font-weight-600 cursor-pointer hover-underline" :title="'Open Account Ledger'">
+                {{ props.row.name }}
+              </a>
+            </span>
+            <span v-else-if="props.column.field == 'amount'" class="text-right d-block font-weight-bold">{{ toMoney(props.row.amount) }}</span>
           </template>
         </template>
       </vue-good-table>
@@ -177,6 +187,8 @@ export default {
 
 <style scoped>
 .kpi { border-left: 4px solid #663399; }
+.cursor-pointer { cursor: pointer; }
+.hover-underline:hover { text-decoration: underline !important; }
 </style>
 
 

@@ -205,6 +205,13 @@
             >{{$t('partial')}}</span>
             <span v-else class="badge badge-outline-warning">{{$t('Unpaid')}}</span>
           </div>
+          <div v-else-if="props.column.field == 'account_name'">
+            <span
+              v-if="props.row.account_name && props.row.account_name !== '---'"
+              class="badge badge-outline-success font-weight-bold"
+            >{{props.row.account_name}}</span>
+            <span v-else class="text-muted">---</span>
+          </div>
           <div v-else-if="props.column.field == 'shipping_status'">
             <span
               v-if="props.row.shipping_status == 'ordered'"
@@ -1912,6 +1919,13 @@ export default {
           field: "payment_status",
           tdClass: "text-left",
           thClass: "text-left"
+        },
+        {
+          label: this.$t("Account") || "Account",
+          field: "account_name",
+          tdClass: "text-left",
+          thClass: "text-left",
+          sortable: false
         },
         {
           label: this.$t("Shipping_status"),

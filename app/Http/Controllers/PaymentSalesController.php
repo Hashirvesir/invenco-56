@@ -188,7 +188,7 @@ class PaymentSalesController extends BaseController
                         'sale_id' => $sale->id,
                         'Ref' => app('App\Http\Controllers\PaymentSalesController')->getNumberOrder(),
                         'date' => $request['date'],
-                        'account_id' => $request['account_id'] ? $request['account_id'] : null,
+                        'account_id' => ! empty($request['account_id']) ? $request['account_id'] : ((\App\Models\Setting::whereNull('deleted_at')->value('default_account_id')) ?: \App\Models\Account::whereNull('deleted_at')->where('account_name', 'LIKE', '%cash%')->value('id')),
                         'payment_method_id' => $request['payment_method_id'],
                         'montant' => $request['montant'],
                         'change' => $request['change'],
@@ -279,7 +279,7 @@ class PaymentSalesController extends BaseController
                     $payment->update([
                         'date' => $request['date'],
                         'payment_method_id' => $request['payment_method_id'],
-                        'account_id' => $request['account_id'] ? $request['account_id'] : null,
+                        'account_id' => ! empty($request['account_id']) ? $request['account_id'] : ((\App\Models\Setting::whereNull('deleted_at')->value('default_account_id')) ?: \App\Models\Account::whereNull('deleted_at')->where('account_name', 'LIKE', '%cash%')->value('id')),
                         'montant' => $request['montant'],
                         'change' => $request['change'],
                         'notes' => $request['notes'],

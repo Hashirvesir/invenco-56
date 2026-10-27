@@ -25,6 +25,7 @@ class AccountingV2ServiceProvider extends ServiceProvider
         $this->commands([
             \App\Console\Commands\AccountingCloseYear::class,
             \App\Console\Commands\AccountingBackfill::class,
+            \App\Console\Commands\AccountingSyncAccounts::class,
         ]);
     }
 
@@ -256,6 +257,22 @@ class AccountingV2ServiceProvider extends ServiceProvider
                         }
                     } catch (\Throwable $e) {
                         Log::warning('[AccountingV2] TransferMoneyDeleted dispatch failed: '.$e->getMessage());
+                    }
+                });
+            }
+            if (class_exists(\App\Models\Account::class)) {
+                \App\Models\Account::saved(function ($account) {
+                    try {
+                        \App\Services\AccountingV2\AccountingSyncService::syncAccount($account);
+                    } catch (\Throwable $e) {
+                        Log::warning('[AccountingV2] Account sync failed: '.$e->getMessage());
+                    }
+                });
+                \App\Models\Account::deleted(function ($account) {
+                    try {
+                        \App\Models\AccountingV2\ChartOfAccount::where('account_id', $account->id)->update(['is_active' => false]);
+                    } catch (\Throwable $e) {
+                        Log::warning('[AccountingV2] Account deactivate failed: '.$e->getMessage());
                     }
                 });
             }
