@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\Account;
 use App\Models\TransferMoney;
+use App\Services\AccountingV2\AccountingHelper;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class TransferMoneyController extends BaseController
 {
@@ -114,12 +116,18 @@ class TransferMoneyController extends BaseController
                 'balance' => $to_account->balance + $request->amount,
             ]);
 
-            TransferMoney::create([
+            $transfer = TransferMoney::create([
                 'from_account_id' => $request['from_account_id'],
                 'to_account_id' => $request['to_account_id'],
                 'amount' => $request['amount'],
                 'date' => $request['date'],
             ]);
+
+            try {
+                AccountingHelper::fromTransferMoney($transfer);
+            } catch (\Throwable $e) {
+                Log::warning('[AccountingV2] Direct transfer journal failed: ' . $e->getMessage());
+            }
 
         }, 10);
 
@@ -176,6 +184,13 @@ class TransferMoneyController extends BaseController
                 'date' => $request['date'],
             ]);
 
+            try {
+                AccountingHelper::reverseTransfer($transfer);
+                AccountingHelper::fromTransferMoney($transfer);
+            } catch (\Throwable $e) {
+                Log::warning('[AccountingV2] Transfer update journal failed: ' . $e->getMessage());
+            }
+
         }, 10);
 
         return response()->json(['success' => true], 200);
@@ -207,6 +222,12 @@ class TransferMoneyController extends BaseController
             $transfer->update([
                 'deleted_at' => Carbon::now(),
             ]);
+
+            try {
+                AccountingHelper::reverseTransfer($transfer);
+            } catch (\Throwable $e) {
+                Log::warning('[AccountingV2] Transfer delete journal failed: ' . $e->getMessage());
+            }
 
         }, 10);
 

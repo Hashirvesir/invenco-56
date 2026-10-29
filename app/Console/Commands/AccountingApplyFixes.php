@@ -24,9 +24,51 @@ class AccountingApplyFixes extends Command
         $this->info('========================================================');
 
         // 1. Sync accounts & chart of accounts + missing entities
-        $this->info('1/6: Running AccountingSyncService::syncAll()...');
+        $this->info('1/7: Running AccountingSyncService::syncAll()...');
         $syncResult = AccountingSyncService::syncAll();
         $this->info('Sync result: ' . json_encode($syncResult));
+
+        // Clean up any duplicate COA entries sharing the same account_id
+        $accountsWithDuplicates = DB::table('acc_chart_of_accounts')
+            ->whereNotNull('account_id')
+            ->select('account_id', DB::raw('COUNT(*) as c'))
+            ->groupBy('account_id')
+            ->having('c', '>', 1)
+            ->get();
+
+        foreach ($accountsWithDuplicates as $dup) {
+            $records = DB::table('acc_chart_of_accounts')
+                ->where('account_id', $dup->account_id)
+                ->orderBy('id', 'asc')
+                ->get();
+            $primary = $records->first();
+            $others = $records->slice(1);
+            foreach ($others as $other) {
+                DB::table('acc_journal_entry_lines')->where('coa_id', $other->id)->update(['coa_id' => $primary->id]);
+                DB::table('acc_chart_of_accounts')->where('id', $other->id)->delete();
+                $this->warn("Merged duplicate COA #{$other->id} ({$other->code}) into primary #{$primary->id} ({$primary->code})");
+            }
+        }
+
+        // Backfill account initial balances if missing
+        $initialAccounts = DB::table('accounts')
+            ->whereNull('deleted_at')
+            ->where('initial_balance', '>', 0)
+            ->get();
+        foreach ($initialAccounts as $iAcc) {
+            AccountingHelper::fromAccountOpeningBalance($iAcc);
+        }
+
+        // Backfill unposted transfers
+        $unpostedTransfers = DB::table('transfer_money')
+            ->whereNull('deleted_at')
+            ->whereNotIn('id', function ($q) {
+                $q->select('reference_id')->from('acc_journal_entries')->where('reference_type', 'transfer');
+            })
+            ->get();
+        foreach ($unpostedTransfers as $tr) {
+            AccountingHelper::fromTransferMoney($tr);
+        }
 
         // 2. Fix null account_ids in payment_sales & payment_purchases
         $this->info('2/6: Backfilling missing account_ids in payment tables...');

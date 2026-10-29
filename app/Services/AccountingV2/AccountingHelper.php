@@ -516,16 +516,84 @@ class AccountingHelper
             if ($amount <= 0 || ! $fromCoaId || ! $toCoaId) {
                 return;
             }
+
+            // Prevent duplicate posting
+            if (! empty($transfer->id)) {
+                $alreadyExists = DB::table('acc_journal_entries')
+                    ->where('reference_type', 'transfer')
+                    ->where('reference_id', $transfer->id)
+                    ->where('status', 'posted')
+                    ->exists();
+                if ($alreadyExists) {
+                    return;
+                }
+            }
+
+            $fromAcc = DB::table('accounts')->where('id', $fromAccountId)->first();
+            $toAcc = DB::table('accounts')->where('id', $toAccountId)->first();
+            $fromName = $fromAcc->account_name ?? ('Account #' . $fromAccountId);
+            $toName = $toAcc->account_name ?? ('Account #' . $toAccountId);
+
             self::createBalancedEntry([
                 'journal' => [
                     'date' => self::dateFrom($transfer->date ?? null),
-                    'description' => 'Transfer #'.($transfer->id ?? ''),
+                    'description' => 'Transfer from ' . $fromName . ' to ' . $toName,
                     'reference_type' => 'transfer',
                     'reference_id' => $transfer->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $toCoaId,   'account_id' => $toAccountId, 'debit' => $amount, 'credit' => 0, 'memo' => 'Transfer In'],
-                    ['coa_id' => $fromCoaId, 'account_id' => $fromAccountId, 'debit' => 0, 'credit' => $amount, 'memo' => 'Transfer Out'],
+                    [
+                        'coa_id' => $toCoaId,
+                        'account_id' => $toAccountId,
+                        'debit' => $amount,
+                        'credit' => 0,
+                        'memo' => 'Transfer In from ' . $fromName,
+                    ],
+                    [
+                        'coa_id' => $fromCoaId,
+                        'account_id' => $fromAccountId,
+                        'debit' => 0,
+                        'credit' => $amount,
+                        'memo' => 'Transfer Out to ' . $toName,
+                    ],
+                ],
+            ]);
+        });
+    }
+
+    public static function fromAccountOpeningBalance($account): void
+    {
+        self::safe(function () use ($account) {
+            $initial = (float) ($account->initial_balance ?? 0);
+            if ($initial <= 0) {
+                return;
+            }
+            $coaId = self::getOrCreateCoaForLegacyAccount($account->id);
+            if (! $coaId) {
+                return;
+            }
+
+            // Check if opening journal already exists
+            $exists = DB::table('acc_journal_entries')
+                ->where('reference_type', 'account_opening')
+                ->where('reference_id', $account->id)
+                ->where('status', 'posted')
+                ->exists();
+            if ($exists) {
+                return;
+            }
+
+            $equityCoaId = self::getOrCreateCoa('3000-CAP', 'Owner Capital', 'equity');
+            self::createBalancedEntry([
+                'journal' => [
+                    'date' => self::dateFrom($account->created_at ?? Carbon::now()),
+                    'description' => 'Opening Balance — ' . ($account->account_name ?? 'Account'),
+                    'reference_type' => 'account_opening',
+                    'reference_id' => $account->id,
+                ],
+                'lines' => [
+                    ['coa_id' => $coaId, 'account_id' => $account->id, 'debit' => $initial, 'credit' => 0, 'memo' => 'Opening Balance'],
+                    ['coa_id' => $equityCoaId, 'account_id' => null, 'debit' => 0, 'credit' => $initial, 'memo' => 'Initial Capital / Equity'],
                 ],
             ]);
         });

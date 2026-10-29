@@ -71,13 +71,21 @@ class AccountController extends BaseController
             'initial_balance' => 'required',
         ]);
 
-        Account::create([
+        $account = Account::create([
             'account_num' => $request['account_num'],
             'account_name' => $request['account_name'],
             'initial_balance' => $request['initial_balance'],
             'balance' => $request['initial_balance'],
             'note' => $request['note'],
         ]);
+
+        if ((float) $request['initial_balance'] > 0) {
+            try {
+                \App\Services\AccountingV2\AccountingHelper::fromAccountOpeningBalance($account);
+            } catch (\Throwable $e) {
+                // best-effort
+            }
+        }
 
         return response()->json(['success' => true], 200);
     }

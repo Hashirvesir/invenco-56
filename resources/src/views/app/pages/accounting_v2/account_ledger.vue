@@ -457,6 +457,8 @@ export default {
         } else {
           this.$router.push('/app/sales/list');
         }
+      } else if (type.includes('transfer')) {
+        this.$router.push('/app/accounts/transfer_money');
       } else {
         this.$router.push('/app/accounting-v2/journal-entries');
       }

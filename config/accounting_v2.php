@@ -16,7 +16,7 @@ return [
     ],
 
     // Toggle automatic journal generation from operational events (sales, purchases, payments, etc.)
-    'auto_generate_journals' => env('ACCOUNTING_V2_AUTO_JOURNALS', false),
+    'auto_generate_journals' => env('ACCOUNTING_V2_AUTO_JOURNALS', true),
 
     // Auto-post generated entries immediately
     'auto_post_journals' => true,

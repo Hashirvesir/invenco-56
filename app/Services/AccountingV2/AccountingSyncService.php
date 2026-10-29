@@ -247,6 +247,21 @@ class AccountingSyncService
     {
         $coa = ChartOfAccount::where('account_id', $account->id)->first();
         if (! $coa) {
+            // Look for existing unlinked or matching COA by code or name to avoid duplicates
+            $coa = ChartOfAccount::where(function ($q) use ($account) {
+                $q->where('code', $account->account_num)
+                  ->orWhere('name', $account->account_name);
+            })->first();
+
+            if ($coa) {
+                $coa->update([
+                    'account_id' => $account->id,
+                    'is_active' => true,
+                ]);
+
+                return $coa;
+            }
+
             $coa = ChartOfAccount::create([
                 'account_id' => $account->id,
                 'code' => '1010-'.$account->id,
@@ -280,9 +295,8 @@ class AccountingSyncService
         if ($coa->account_id) {
             $account = Account::find($coa->account_id);
             if ($account) {
-                $account->update([
-                    'account_name' => $coa->name,
-                ]);
+                $account->account_name = $coa->name;
+                $account->saveQuietly();
 
                 return $account;
             }
@@ -290,13 +304,27 @@ class AccountingSyncService
 
         // Only create legacy account for asset accounts that represent payment accounts (code starting with 10 or 12)
         if (str_starts_with($coa->code, '10') || str_starts_with($coa->code, '12') || str_contains(strtolower($coa->name), 'bank') || str_contains(strtolower($coa->name), 'cash')) {
-            $account = Account::create([
+            // Check if legacy account with same name or account_num already exists
+            $existing = Account::whereNull('deleted_at')
+                ->where(function ($q) use ($coa) {
+                    $q->where('account_num', $coa->code)
+                      ->orWhere('account_name', $coa->name);
+                })->first();
+
+            if ($existing) {
+                $coa->update(['account_id' => $existing->id]);
+
+                return $existing;
+            }
+
+            $account = new Account([
                 'account_num' => $coa->code,
                 'account_name' => $coa->name,
                 'initial_balance' => 0,
                 'balance' => 0,
                 'note' => 'Created via Chart of Accounts',
             ]);
+            $account->saveQuietly();
 
             $coa->update(['account_id' => $account->id]);
 

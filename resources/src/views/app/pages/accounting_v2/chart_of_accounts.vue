@@ -73,8 +73,8 @@
               {{ toMoney(props.row.balance) }}
             </span>
           </span>
-          <span v-else-if="props.column.field == 'active'">
-            <span class="badge" :class="props.row.is_active ? 'badge-success' : 'badge-secondary'">{{ props.row.is_active ? $t('Yes') : $t('No') }}</span>
+          <span v-else-if="props.column.field == 'is_active' || props.column.field == 'active'">
+            <span class="badge" :class="(props.row.is_active == 1 || props.row.is_active === true) ? 'badge-success' : 'badge-secondary'">{{ (props.row.is_active == 1 || props.row.is_active === true) ? $t('Yes') : $t('No') }}</span>
           </span>
           <span v-else-if="props.column.field == 'actions'">
             <a @click="openLedger(props.row)" :title="$t('Account_Ledger') || 'Ledger'" class="mr-2 cursor-pointer" v-b-tooltip.hover>
@@ -415,7 +415,8 @@ export default {
     },
     openEdit(row) {
       this.editing = true;
-      this.form = { id: row.id, code: row.code, name: row.name, type: row.type, parent_id: row.parent_id, is_active: row.is_active ? 1 : 0 };
+      const activeVal = (row.is_active == 1 || row.is_active === true || row.is_active === '1') ? 1 : 0;
+      this.form = { id: row.id, code: row.code, name: row.name, type: row.type, parent_id: row.parent_id, is_active: activeVal };
       this.btnLoading = false;
       this.showModal = true;
     },
