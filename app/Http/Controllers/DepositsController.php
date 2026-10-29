@@ -12,6 +12,8 @@ use Carbon\Carbon;
 use DB;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use App\Services\AccountingV2\AccountingHelper;
 
 class DepositsController extends BaseController
 {
@@ -112,7 +114,7 @@ class DepositsController extends BaseController
                 'deposit.amount' => 'required',
             ]);
 
-            Deposit::create([
+            $deposit = Deposit::create([
                 'user_id' => Auth::user()->id,
                 'date' => $request['deposit']['date'],
                 'deposit_ref' => $this->getNumberOrder(),
@@ -128,6 +130,12 @@ class DepositsController extends BaseController
                 $account->update([
                     'balance' => $account->balance + $request['deposit']['amount'],
                 ]);
+            }
+
+            try {
+                AccountingHelper::fromDeposit($deposit);
+            } catch (\Throwable $e) {
+                Log::warning('[AccountingV2] Direct deposit journal failed: ' . $e->getMessage());
             }
 
         }, 10);
@@ -177,7 +185,7 @@ class DepositsController extends BaseController
                 ]);
             }
 
-            Deposit::whereId($id)->update([
+            $deposit->update([
                 'date' => $request['deposit']['date'],
                 'account_id' => $request['deposit']['account_id'] ? $request['deposit']['account_id'] : null,
                 'deposit_category_id' => $request['deposit']['category_id'],
@@ -190,6 +198,13 @@ class DepositsController extends BaseController
                 $account->update([
                     'balance' => $account->balance + $request['deposit']['amount'],
                 ]);
+            }
+
+            try {
+                AccountingHelper::reverseDeposit($deposit);
+                AccountingHelper::fromDeposit($deposit);
+            } catch (\Throwable $e) {
+                Log::warning('[AccountingV2] Direct deposit journal update failed: ' . $e->getMessage());
             }
 
         }, 10);
@@ -217,6 +232,12 @@ class DepositsController extends BaseController
         $deposit->update([
             'deleted_at' => Carbon::now(),
         ]);
+
+        try {
+            AccountingHelper::reverseDeposit($deposit);
+        } catch (\Throwable $e) {
+            Log::warning('[AccountingV2] Direct deposit journal reversal failed: ' . $e->getMessage());
+        }
 
         $account = Account::where('id', $deposit->account_id)->exists();
 
@@ -264,6 +285,12 @@ class DepositsController extends BaseController
             $deposit->update([
                 'deleted_at' => Carbon::now(),
             ]);
+
+            try {
+                AccountingHelper::reverseDeposit($deposit);
+            } catch (\Throwable $e) {
+                Log::warning('[AccountingV2] Direct deposit journal reversal failed: ' . $e->getMessage());
+            }
 
         }
 

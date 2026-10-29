@@ -475,21 +475,40 @@ class AccountingHelper
     {
         self::safe(function () use ($deposit) {
             $cashCoaId = self::getOrCreateCoaForLegacyAccount($deposit->account_id);
-            $equityCoaId = self::getOrCreateCoa(Config::get('accounting_v2.codes.retained_earnings', '3100'), 'Retained Earnings', 'equity');
+            if (! $cashCoaId) {
+                $cashCoaId = self::getOrCreateCoa('1000-CASH', 'Cash in Hand', 'asset');
+            }
+            $equityCoaId = self::getOrCreateCoa('3000-CAP', 'Owner Capital', 'equity');
             $amount = (float) ($deposit->amount ?? 0);
-            if ($amount <= 0) {
+            if ($amount <= 0 || ! $cashCoaId || ! $equityCoaId) {
                 return;
             }
+
+            if (! empty($deposit->id)) {
+                $alreadyExists = DB::table('acc_journal_entries')
+                    ->where('reference_type', 'deposit')
+                    ->where('reference_id', $deposit->id)
+                    ->where('status', 'posted')
+                    ->exists();
+                if ($alreadyExists) {
+                    return;
+                }
+            }
+
+            $acc = DB::table('accounts')->where('id', $deposit->account_id)->first();
+            $accName = $acc->account_name ?? 'Cash/Bank Account';
+            $ref = $deposit->deposit_ref ?? ('DP_' . ($deposit->id ?? ''));
+
             self::createBalancedEntry([
                 'journal' => [
                     'date' => self::dateFrom($deposit->date ?? null),
-                    'description' => 'Deposit #'.($deposit->id ?? ''),
+                    'description' => 'Deposit #' . $ref . ' (' . $accName . ')',
                     'reference_type' => 'deposit',
                     'reference_id' => $deposit->id ?? null,
                 ],
                 'lines' => [
-                    ['coa_id' => $cashCoaId,   'account_id' => $deposit->account_id ?? null, 'debit' => $amount, 'credit' => 0, 'memo' => 'Deposit In'],
-                    ['coa_id' => $equityCoaId, 'account_id' => null, 'debit' => 0, 'credit' => $amount, 'memo' => 'Equity'],
+                    ['coa_id' => $cashCoaId,   'account_id' => $deposit->account_id ?? null, 'debit' => $amount, 'credit' => 0, 'memo' => 'Deposit into ' . $accName],
+                    ['coa_id' => $equityCoaId, 'account_id' => null, 'debit' => 0, 'credit' => $amount, 'memo' => 'Owner Capital / Deposit'],
                 ],
             ]);
         });

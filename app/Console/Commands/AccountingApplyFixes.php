@@ -70,6 +70,17 @@ class AccountingApplyFixes extends Command
             AccountingHelper::fromTransferMoney($tr);
         }
 
+        // Backfill unposted deposits
+        $unpostedDeposits = DB::table('deposits')
+            ->whereNull('deleted_at')
+            ->whereNotIn('id', function ($q) {
+                $q->select('reference_id')->from('acc_journal_entries')->where('reference_type', 'deposit');
+            })
+            ->get();
+        foreach ($unpostedDeposits as $dp) {
+            AccountingHelper::fromDeposit($dp);
+        }
+
         // 2. Fix null account_ids in payment_sales & payment_purchases
         $this->info('2/6: Backfilling missing account_ids in payment tables...');
         $cashAccId = DB::table('accounts')->whereNull('deleted_at')->where('account_name', 'LIKE', '%cash%')->value('id');
