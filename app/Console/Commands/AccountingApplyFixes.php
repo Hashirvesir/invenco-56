@@ -24,7 +24,9 @@ class AccountingApplyFixes extends Command
         $this->info('========================================================');
 
         // 1. Sync accounts & chart of accounts + missing entities
-        $this->info('1/7: Running AccountingSyncService::syncAll()...');
+        $this->info('1/7: Running AccountingSyncService::deduplicateCashAccounts() and syncAll()...');
+        $dedupResult = AccountingSyncService::deduplicateCashAccounts();
+        $this->info('Cash deduplication result: ' . json_encode($dedupResult));
         $syncResult = AccountingSyncService::syncAll();
         $this->info('Sync result: ' . json_encode($syncResult));
 

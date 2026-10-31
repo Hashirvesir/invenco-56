@@ -71,6 +71,22 @@ class AccountController extends BaseController
             'initial_balance' => 'required',
         ]);
 
+        $normalizedName = strtolower(trim($request['account_name']));
+        if ($normalizedName === 'cash' || $normalizedName === 'cash in hand' || trim($request['account_num']) === '1000-CASH') {
+            $existingCash = Account::whereNull('deleted_at')
+                ->where(function ($q) {
+                    $q->where('account_num', '1000-CASH')
+                      ->orWhere(\Illuminate\Support\Facades\DB::raw('LOWER(TRIM(account_name))'), 'cash in hand')
+                      ->orWhere(\Illuminate\Support\Facades\DB::raw('LOWER(TRIM(account_name))'), 'cash');
+                })->first();
+
+            if ($existingCash) {
+                return response()->json([
+                    'error' => 'A Cash in Hand account already exists. Please use the existing Cash in Hand account.',
+                ], 422);
+            }
+        }
+
         $account = Account::create([
             'account_num' => $request['account_num'],
             'account_name' => $request['account_name'],

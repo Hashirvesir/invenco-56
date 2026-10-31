@@ -297,6 +297,21 @@ class ChartOfAccountsController extends Controller
             'type' => 'required|in:asset,liability,equity,income,expense',
         ]);
 
+        $normalizedName = strtolower(trim($request->get('name')));
+        $code = trim($request->get('code'));
+        if ($normalizedName === 'cash' || $normalizedName === 'cash in hand' || $code === '1000-CASH') {
+            $existingCashCoa = ChartOfAccount::where('code', '1000-CASH')
+                ->orWhere(function ($q) {
+                    $q->whereIn(DB::raw('LOWER(TRIM(name))'), ['cash', 'cash in hand'])->where('type', 'asset');
+                })->first();
+
+            if ($existingCashCoa) {
+                return response()->json([
+                    'error' => 'A Cash in Hand account already exists in Chart of Accounts.',
+                ], 422);
+            }
+        }
+
         $isActive = true;
         if ($request->has('is_active')) {
             $isActive = filter_var($request->get('is_active'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? true;

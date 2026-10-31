@@ -390,7 +390,8 @@ export default {
         })
         .catch(error => {
           this.SubmitProcessing = false;
-          this.makeToast("danger", error.error, this.$t("Failed"));
+          const msg = (error.response && error.response.data && (error.response.data.error || error.response.data.message)) || error.message || this.$t("Failed");
+          this.makeToast("danger", msg, this.$t("Failed"));
         });
     },
 
@@ -415,7 +416,8 @@ export default {
         })
         .catch(error => {
           this.SubmitProcessing = false;
-          this.makeToast("danger", error.error, this.$t("Failed"));
+          const msg = (error.response && error.response.data && (error.response.data.error || error.response.data.message)) || error.message || this.$t("Failed");
+          this.makeToast("danger", msg, this.$t("Failed"));
         });
     },
 

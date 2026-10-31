@@ -7,6 +7,7 @@ use App\Models\TransferMoney;
 use App\Services\AccountingV2\AccountingHelper;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class TransferMoneyController extends BaseController
@@ -16,17 +17,14 @@ class TransferMoneyController extends BaseController
     public function index(Request $request)
     {
         $this->authorizeForUser($request->user('api'), 'view', TransferMoney::class);
-        // How many items do you want to display.
+
         $perPage = $request->limit;
         $pageStart = \Request::get('page', 1);
-        // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
-        $order = $request->SortField;
-        $dir = $request->SortType;
+        $order = $request->SortField ?? 'id';
+        $dir = $request->SortType ?? 'desc';
 
-        // Check If User Has Permission View  All Records
-        $transfers = TransferMoney::with('from_account', 'to_account')->where('deleted_at', '=', null)
-
+        $transfers = TransferMoney::with('from_account', 'to_account')->whereNull('deleted_at')
             ->where(function ($query) use ($request) {
                 return $query->when($request->filled('search'), function ($query) use ($request) {
                     return $query->where(function ($query) use ($request) {
@@ -34,11 +32,11 @@ class TransferMoneyController extends BaseController
                             $q->where('account_name', 'LIKE', "%{$request->search}%");
                         });
                     })
-                        ->orWhere(function ($query) use ($request) {
-                            return $query->whereHas('to_account', function ($q) use ($request) {
-                                $q->where('account_name', 'LIKE', "%{$request->search}%");
-                            });
+                    ->orWhere(function ($query) use ($request) {
+                        return $query->whereHas('to_account', function ($q) use ($request) {
+                            $q->where('account_name', 'LIKE', "%{$request->search}%");
                         });
+                    });
                 });
             });
 
@@ -46,6 +44,7 @@ class TransferMoneyController extends BaseController
         if ($perPage == '-1') {
             $perPage = $totalRows;
         }
+
         $transfer_data = $transfers->offset($offSet)
             ->limit($perPage)
             ->orderBy($order, $dir)
@@ -53,26 +52,24 @@ class TransferMoneyController extends BaseController
 
         $data = [];
         foreach ($transfer_data as $transfer) {
-
-            $item['id'] = $transfer->id;
-            $item['from_account'] = $transfer['from_account']->account_name;
-            $item['to_account'] = $transfer['to_account']->account_name;
-            $item['from_account_id'] = $transfer->from_account_id;
-            $item['to_account_id'] = $transfer->to_account_id;
-            $item['amount'] = $transfer->amount;
-            $item['date'] = $transfer->date;
-
-            $data[] = $item;
+            $data[] = [
+                'id' => $transfer->id,
+                'from_account' => $transfer->from_account->account_name ?? 'N/A',
+                'to_account' => $transfer->to_account->account_name ?? 'N/A',
+                'from_account_id' => $transfer->from_account_id,
+                'to_account_id' => $transfer->to_account_id,
+                'amount' => $transfer->amount,
+                'date' => $transfer->date,
+            ];
         }
 
-        $accounts = Account::where('deleted_at', '=', null)->get(['id', 'account_name']);
+        $accounts = Account::whereNull('deleted_at')->get(['id', 'account_name']);
 
         return response()->json([
             'transfers' => $data,
             'accounts' => $accounts,
             'totalRows' => $totalRows,
         ]);
-
     }
 
     // -------------- Store New TransferMoney ---------------\\
@@ -81,57 +78,50 @@ class TransferMoneyController extends BaseController
     {
         $this->authorizeForUser($request->user('api'), 'create', TransferMoney::class);
 
-        request()->validate([
+        $request->validate([
             'from_account_id' => 'required|different:to_account_id',
             'to_account_id' => 'required|different:from_account_id',
-            'amount' => 'required',
+            'amount' => 'required|numeric|gt:0',
             'date' => 'required',
-        ],
-            [
-                'from_account_id.different' => 'From and to accounts cannot be the same.',
-                'to_account_id.different' => 'To and from accounts cannot be the same.',
-            ]);
+        ], [
+            'from_account_id.different' => 'From and To accounts cannot be the same.',
+            'to_account_id.different' => 'To and From accounts cannot be the same.',
+            'amount.gt' => 'Transfer amount must be greater than 0.',
+        ]);
 
-        // Additional check if from_account_id and to_account_id are not the same
-        if ($request->from_account_id === $request->to_account_id) {
-            return response()->json(['error' => 'Account From and to account cannot be the same.'], 400);
+        if ($request->from_account_id == $request->to_account_id) {
+            return response()->json(['error' => 'From and To accounts cannot be the same.'], 422);
         }
 
-        // Retrieve account balances
-        $from_account = Account::findOrFail($request->from_account_id);
-        $to_account = Account::findOrFail($request->to_account_id);
+        $amount = (float) $request->amount;
 
-        // Check if from_account has enough balance
-        if ($from_account->balance < $request->amount) {
-            return response()->json(['error' => 'Insufficient balance in the from account.'], 400);
-        }
+        $transfer = DB::transaction(function () use ($request, $amount) {
+            $from_account = Account::findOrFail($request->from_account_id);
+            $to_account = Account::findOrFail($request->to_account_id);
 
-        \DB::transaction(function () use ($request, $from_account, $to_account) {
+            $from_account->balance = (float) $from_account->balance - $amount;
+            $from_account->saveQuietly();
 
-            $from_account->update([
-                'balance' => $from_account->balance - $request->amount,
-            ]);
+            $to_account->balance = (float) $to_account->balance + $amount;
+            $to_account->saveQuietly();
 
-            $to_account->update([
-                'balance' => $to_account->balance + $request->amount,
-            ]);
-
-            $transfer = TransferMoney::create([
-                'from_account_id' => $request['from_account_id'],
-                'to_account_id' => $request['to_account_id'],
-                'amount' => $request['amount'],
-                'date' => $request['date'],
+            $createdTransfer = TransferMoney::create([
+                'from_account_id' => $request->from_account_id,
+                'to_account_id' => $request->to_account_id,
+                'amount' => $amount,
+                'date' => $request->date,
             ]);
 
             try {
-                AccountingHelper::fromTransferMoney($transfer);
+                AccountingHelper::fromTransferMoney($createdTransfer);
             } catch (\Throwable $e) {
                 Log::warning('[AccountingV2] Direct transfer journal failed: ' . $e->getMessage());
             }
 
+            return $createdTransfer;
         }, 10);
 
-        return response()->json(['success' => true], 200);
+        return response()->json(['success' => true, 'transfer' => $transfer], 200);
     }
 
     // ------------ function show -----------\\
@@ -139,7 +129,6 @@ class TransferMoneyController extends BaseController
     public function show($id)
     {
         //
-
     }
 
     // -------------- Update TransferMoney ---------------\\
@@ -150,51 +139,64 @@ class TransferMoneyController extends BaseController
 
         $transfer = TransferMoney::findOrFail($id);
 
-        request()->validate([
-            'amount' => 'required',
+        $request->validate([
+            'amount' => 'required|numeric|gt:0',
             'date' => 'required',
+        ], [
+            'amount.gt' => 'Transfer amount must be greater than 0.',
         ]);
 
-        // Retrieve account
-        $from_account = Account::findOrFail($transfer->from_account_id);
-        $to_account = Account::findOrFail($transfer->to_account_id);
+        $newFromId = $request->get('from_account_id', $transfer->from_account_id);
+        $newToId = $request->get('to_account_id', $transfer->to_account_id);
 
-        // Additional check if from_account_id and to_account_id are not the same
-        if ($request->from_account_id === $request->to_account_id) {
-            return response()->json(['error' => 'Account From and to account cannot be the same.'], 400);
+        if ($newFromId == $newToId) {
+            return response()->json(['error' => 'From and To accounts cannot be the same.'], 422);
         }
 
-        // Check if from_account has enough balance
-        if (($from_account->balance + $transfer->amount) < $request->amount) {
-            return response()->json(['error' => 'Insufficient balance in the from account.'], 400);
-        }
+        $newAmount = (float) $request->amount;
+        $oldAmount = (float) $transfer->amount;
 
-        \DB::transaction(function () use ($request, $from_account, $to_account, $transfer) {
+        DB::transaction(function () use ($transfer, $newFromId, $newToId, $newAmount, $oldAmount, $request) {
+            // 1. Revert old transfer impact on old accounts
+            $oldFrom = Account::find($transfer->from_account_id);
+            if ($oldFrom) {
+                $oldFrom->balance = (float) $oldFrom->balance + $oldAmount;
+                $oldFrom->saveQuietly();
+            }
 
-            $from_account->update([
-                'balance' => $from_account->balance + $transfer->amount - $request->amount,
-            ]);
+            $oldTo = Account::find($transfer->to_account_id);
+            if ($oldTo) {
+                $oldTo->balance = (float) $oldTo->balance - $oldAmount;
+                $oldTo->saveQuietly();
+            }
 
-            $to_account->update([
-                'balance' => $to_account->balance - $transfer->amount + $request->amount,
-            ]);
+            // 2. Apply new transfer impact on new accounts
+            $newFrom = Account::findOrFail($newFromId);
+            $newFrom->balance = (float) $newFrom->balance - $newAmount;
+            $newFrom->saveQuietly();
 
+            $newTo = Account::findOrFail($newToId);
+            $newTo->balance = (float) $newTo->balance + $newAmount;
+            $newTo->saveQuietly();
+
+            // 3. Update transfer record
             $transfer->update([
-                'amount' => $request['amount'],
-                'date' => $request['date'],
+                'from_account_id' => $newFromId,
+                'to_account_id' => $newToId,
+                'amount' => $newAmount,
+                'date' => $request->date,
             ]);
 
+            // 4. Update journal entry
             try {
                 AccountingHelper::reverseTransfer($transfer);
                 AccountingHelper::fromTransferMoney($transfer);
             } catch (\Throwable $e) {
                 Log::warning('[AccountingV2] Transfer update journal failed: ' . $e->getMessage());
             }
-
         }, 10);
 
         return response()->json(['success' => true], 200);
-
     }
 
     // -------------- Delete TransferMoney ---------------\\
@@ -203,32 +205,30 @@ class TransferMoneyController extends BaseController
     {
         $this->authorizeForUser($request->user('api'), 'delete', TransferMoney::class);
 
-        \DB::transaction(function () use ($id) {
-
+        DB::transaction(function () use ($id) {
             $transfer = TransferMoney::findOrFail($id);
+            $amount = (float) $transfer->amount;
 
-            // Retrieve account
-            $from_account = Account::findOrFail($transfer->from_account_id);
-            $to_account = Account::findOrFail($transfer->to_account_id);
+            $from_account = Account::find($transfer->from_account_id);
+            if ($from_account) {
+                $from_account->balance = (float) $from_account->balance + $amount;
+                $from_account->saveQuietly();
+            }
 
-            $from_account->update([
-                'balance' => $from_account->balance + $transfer->amount,
-            ]);
+            $to_account = Account::find($transfer->to_account_id);
+            if ($to_account) {
+                $to_account->balance = (float) $to_account->balance - $amount;
+                $to_account->saveQuietly();
+            }
 
-            $to_account->update([
-                'balance' => $to_account->balance - $transfer->amount,
-            ]);
-
-            $transfer->update([
-                'deleted_at' => Carbon::now(),
-            ]);
+            $transfer->deleted_at = Carbon::now();
+            $transfer->saveQuietly();
 
             try {
                 AccountingHelper::reverseTransfer($transfer);
             } catch (\Throwable $e) {
                 Log::warning('[AccountingV2] Transfer delete journal failed: ' . $e->getMessage());
             }
-
         }, 10);
 
         return response()->json(['success' => true], 200);

@@ -521,7 +521,20 @@ class AccountingHelper
 
     public static function reverseTransfer($transfer): void
     {
-        self::reverseByReference('transfer', $transfer->id ?? 0, 'Reverse Transfer #'.($transfer->id ?? ''));
+        self::safe(function () use ($transfer) {
+            $id = $transfer->id ?? 0;
+            if (! $id) {
+                return;
+            }
+            $entryIds = DB::table('acc_journal_entries')
+                ->where('reference_type', 'transfer')
+                ->where('reference_id', $id)
+                ->pluck('id');
+            if ($entryIds->isNotEmpty()) {
+                DB::table('acc_journal_entry_lines')->whereIn('journal_entry_id', $entryIds)->delete();
+                DB::table('acc_journal_entries')->whereIn('id', $entryIds)->delete();
+            }
+        });
     }
 
     public static function fromTransferMoney($transfer): void
@@ -919,6 +932,41 @@ class AccountingHelper
                 return (int) $existing->id;
             }
             $legacy = DB::table('accounts')->where('id', $accountId)->first();
+            if (! $legacy) {
+                return null;
+            }
+
+            // If it's Cash in Hand or cash account, link to 1000-CASH
+            $lowerName = strtolower(trim($legacy->account_name ?? ''));
+            if ($lowerName === 'cash in hand' || $lowerName === 'cash' || ($legacy->account_num ?? '') === '1000-CASH') {
+                $cashCoa = DB::table('acc_chart_of_accounts')->where('code', '1000-CASH')->first();
+                if ($cashCoa) {
+                    if ($cashCoa->account_id != $accountId || $cashCoa->name !== 'Cash in Hand') {
+                        DB::table('acc_chart_of_accounts')->where('id', $cashCoa->id)->update([
+                            'account_id' => $accountId,
+                            'name' => 'Cash in Hand',
+                            'type' => 'asset',
+                            'is_active' => true,
+                        ]);
+                    }
+                    return (int) $cashCoa->id;
+                }
+            }
+
+            // Check if existing COA matches name or code
+            $byCodeOrName = DB::table('acc_chart_of_accounts')
+                ->where('code', $legacy->account_num)
+                ->orWhere('name', $legacy->account_name)
+                ->first();
+            if ($byCodeOrName) {
+                DB::table('acc_chart_of_accounts')->where('id', $byCodeOrName->id)->update([
+                    'account_id' => $accountId,
+                    'type' => 'asset',
+                    'is_active' => true,
+                ]);
+                return (int) $byCodeOrName->id;
+            }
+
             $code = '1010-'.(string) $accountId;
             $name = $legacy->account_name ?? ('Account #'.$accountId);
 

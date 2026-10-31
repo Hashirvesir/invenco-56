@@ -27,11 +27,13 @@ class AccountingSyncService
             ->where('type', 'income')
             ->update(['type' => 'asset', 'updated_at' => Carbon::now()]);
 
-        // 2. Ensure general cash account exists in legacy accounts and acc_chart_of_accounts
+        // 2. Automatically merge and deduplicate Cash in Hand accounts in accounts & COA
+        self::deduplicateCashAccounts();
+
         $cashAccount = Account::whereNull('deleted_at')
             ->where(function ($q) {
-                $q->where('account_name', 'like', '%cash%')
-                  ->orWhere('account_num', '1000-CASH');
+                $q->where('account_num', '1000-CASH')
+                  ->orWhere('account_name', 'Cash in Hand');
             })->first();
 
         if (! $cashAccount) {
@@ -62,6 +64,7 @@ class AccountingSyncService
                 ->where('id', $generalCash->id)
                 ->update([
                     'account_id' => $cashAccount->id,
+                    'name' => 'Cash in Hand',
                     'type' => 'asset',
                     'is_active' => true,
                     'updated_at' => Carbon::now(),
@@ -80,7 +83,7 @@ class AccountingSyncService
 
         foreach ($accounts as $acc) {
             // If it's the cash account, skip because it's already mapped to 1000-CASH
-            if ($acc->id == $cashAccount->id) {
+            if ($acc->id == $cashAccount->id || $acc->account_num === '1000-CASH' || strtolower(trim($acc->account_name)) === 'cash in hand' || strtolower(trim($acc->account_name)) === 'cash') {
                 continue;
             }
 
@@ -170,6 +173,7 @@ class AccountingSyncService
             } else {
                 $update = [
                     'code' => $item['code'],
+                    'name' => $item['name'],
                     'type' => $item['type'],
                     'is_active' => true,
                     'updated_at' => Carbon::now(),
@@ -332,5 +336,151 @@ class AccountingSyncService
         }
 
         return null;
+    }
+
+    /**
+     * Merge and deduplicate any duplicate Cash in Hand accounts in accounts table
+     * and acc_chart_of_accounts, linking all historical records to a single canonical account.
+     */
+    public static function deduplicateCashAccounts(): array
+    {
+        if (! Schema::hasTable('accounts') || ! Schema::hasTable('acc_chart_of_accounts')) {
+            return ['merged_accounts' => 0, 'merged_coas' => 0];
+        }
+
+        $mergedAccounts = 0;
+        $mergedCoas = 0;
+
+        // 1. DEDUPLICATE `accounts` TABLE
+        // Find all cash accounts (excluding petty cash)
+        $cashAccounts = Account::whereNull('deleted_at')
+            ->where(function ($q) {
+                $q->where('account_num', '1000-CASH')
+                  ->orWhere(function ($sq) {
+                      $sq->where(function ($ssq) {
+                          $ssq->whereRaw('LOWER(account_name) LIKE ?', ['%cash%'])
+                              ->orWhereRaw('LOWER(account_name) LIKE ?', ['%cash in hand%']);
+                      })->whereRaw('LOWER(account_name) NOT LIKE ?', ['%petty%']);
+                  });
+            })
+            ->orderByRaw("CASE WHEN account_num = '1000-CASH' THEN 0 ELSE 1 END")
+            ->orderBy('id', 'asc')
+            ->get();
+
+        if ($cashAccounts->isEmpty()) {
+            $canonicalCash = Account::create([
+                'account_num' => '1000-CASH',
+                'account_name' => 'Cash in Hand',
+                'initial_balance' => 0,
+                'balance' => 0,
+                'note' => 'Default Cash Account',
+            ]);
+        } else {
+            $canonicalCash = $cashAccounts->first();
+            $canonicalCash->account_name = 'Cash in Hand';
+            $canonicalCash->account_num = '1000-CASH';
+            $canonicalCash->saveQuietly();
+
+            $duplicates = $cashAccounts->slice(1);
+            foreach ($duplicates as $dup) {
+                $canonicalCash->initial_balance = (float) $canonicalCash->initial_balance + (float) $dup->initial_balance;
+                $canonicalCash->balance = (float) $canonicalCash->balance + (float) $dup->balance;
+                $canonicalCash->saveQuietly();
+
+                $dupId = $dup->id;
+                $canonicalId = $canonicalCash->id;
+
+                $tables = [
+                    'deposits' => 'account_id',
+                    'expenses' => 'account_id',
+                    'payment_sales' => 'account_id',
+                    'payment_purchases' => 'account_id',
+                    'payment_purchase_returns' => 'account_id',
+                    'payment_sale_returns' => 'account_id',
+                    'payrolls' => 'account_id',
+                    'acc_journal_entry_lines' => 'account_id',
+                    'client_opening_balance_payments' => 'account_id',
+                    'provider_opening_balance_payments' => 'account_id',
+                    'service_job_payments' => 'account_id',
+                ];
+
+                foreach ($tables as $tbl => $col) {
+                    if (Schema::hasTable($tbl) && Schema::hasColumn($tbl, $col)) {
+                        DB::table($tbl)->where($col, $dupId)->update([$col => $canonicalId]);
+                    }
+                }
+
+                if (Schema::hasTable('transfer_money')) {
+                    DB::table('transfer_money')->where('from_account_id', $dupId)->update(['from_account_id' => $canonicalId]);
+                    DB::table('transfer_money')->where('to_account_id', $dupId)->update(['to_account_id' => $canonicalId]);
+                }
+
+                if (Schema::hasTable('settings') && Schema::hasColumn('settings', 'default_account_id')) {
+                    DB::table('settings')->where('default_account_id', $dupId)->update(['default_account_id' => $canonicalId]);
+                }
+
+                DB::table('accounts')->where('id', $dupId)->delete();
+                $mergedAccounts++;
+            }
+        }
+
+        // 2. DEDUPLICATE `acc_chart_of_accounts` TABLE
+        $cashCoas = DB::table('acc_chart_of_accounts')
+            ->where(function ($q) use ($canonicalCash) {
+                $q->where('code', '1000-CASH')
+                  ->orWhere('account_id', $canonicalCash->id)
+                  ->orWhere(function ($sq) {
+                      $sq->where(function ($ssq) {
+                          $ssq->whereRaw('LOWER(TRIM(name)) IN (?, ?, ?)', ['cash', 'cash in hand', 'cash-in-hand'])
+                              ->orWhereRaw('LOWER(name) LIKE ?', ['%cash in hand%']);
+                      })->where('type', 'asset')
+                        ->where('code', '!=', '1020-PETTY');
+                  });
+            })
+            ->orderByRaw("CASE WHEN code = '1000-CASH' THEN 0 ELSE 1 END")
+            ->orderBy('id', 'asc')
+            ->get();
+
+        if ($cashCoas->isEmpty()) {
+            $canonicalCoaId = DB::table('acc_chart_of_accounts')->insertGetId([
+                'account_id' => $canonicalCash->id,
+                'code' => '1000-CASH',
+                'name' => 'Cash in Hand',
+                'type' => 'asset',
+                'parent_id' => null,
+                'level' => 0,
+                'is_active' => true,
+                'created_at' => Carbon::now(),
+                'updated_at' => Carbon::now(),
+            ]);
+        } else {
+            $primaryCoa = $cashCoas->first();
+            $canonicalCoaId = $primaryCoa->id;
+
+            DB::table('acc_chart_of_accounts')->where('id', $canonicalCoaId)->update([
+                'account_id' => $canonicalCash->id,
+                'code' => '1000-CASH',
+                'name' => 'Cash in Hand',
+                'type' => 'asset',
+                'is_active' => true,
+                'updated_at' => Carbon::now(),
+            ]);
+
+            $dupCoas = $cashCoas->slice(1);
+            foreach ($dupCoas as $dCoa) {
+                if (Schema::hasTable('acc_journal_entry_lines')) {
+                    DB::table('acc_journal_entry_lines')->where('coa_id', $dCoa->id)->update(['coa_id' => $canonicalCoaId]);
+                }
+                DB::table('acc_chart_of_accounts')->where('id', $dCoa->id)->delete();
+                $mergedCoas++;
+            }
+        }
+
+        return [
+            'canonical_account_id' => $canonicalCash->id,
+            'canonical_coa_id' => $canonicalCoaId,
+            'merged_accounts' => $mergedAccounts,
+            'merged_coas' => $mergedCoas,
+        ];
     }
 }
