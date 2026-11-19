@@ -387,8 +387,18 @@ class DashboardController extends Controller
 
         // ---------------- sales + payments (for due) -------------
 
+        $applyDate = function ($q) use ($request) {
+            if ($request->filled('from') && $request->filled('to')) {
+                $q->whereBetween('date', [$request->from, $request->to]);
+            } elseif ($request->filled('from')) {
+                $q->where('date', '>=', $request->from);
+            } elseif ($request->filled('to')) {
+                $q->where('date', '<=', $request->to);
+            }
+        };
+
         $salesBase = Sale::where('deleted_at', '=', null)
-            ->whereBetween('date', [$request->from, $request->to])
+            ->where($applyDate)
             ->where(function ($query) use ($view_records) {
                 if (! $view_records) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -427,7 +437,7 @@ class DashboardController extends Controller
         // --------------- return_sales
 
         $return_sales_total = SaleReturn::where('deleted_at', '=', null)
-            ->whereBetween('date', [$request->from, $request->to])
+            ->where($applyDate)
             ->where(function ($query) use ($view_records) {
                 if (! $view_records) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -448,7 +458,7 @@ class DashboardController extends Controller
         // ------------------- purchases + payments (for due) ------
 
         $purchasesBase = Purchase::where('deleted_at', '=', null)
-            ->whereBetween('date', [$request->from, $request->to])
+            ->where($applyDate)
             ->where(function ($query) use ($view_records) {
                 if (! $view_records) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -480,7 +490,7 @@ class DashboardController extends Controller
         // ------------------------- return_purchases --------------
 
         $return_purchases_total = PurchaseReturn::where('deleted_at', '=', null)
-            ->whereBetween('date', [$request->from, $request->to])
+            ->where($applyDate)
             ->where(function ($query) use ($view_records) {
                 if (! $view_records) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -500,7 +510,7 @@ class DashboardController extends Controller
         // ------------------------- today invoices (count) --------
 
         $data['today_invoices'] = Sale::where('deleted_at', '=', null)
-            ->whereBetween('date', [$request->from, $request->to])
+            ->where($applyDate)
             ->where(function ($query) use ($view_records) {
                 if (! $view_records) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -520,7 +530,7 @@ class DashboardController extends Controller
         // profit_fifo = salesSum - COGS_FIFO - expenses
 
         $expenses_total = Expense::where('deleted_at', '=', null)
-            ->whereBetween('date', [$request->from, $request->to])
+            ->where($applyDate)
             ->where(function ($query) use ($view_records) {
                 if (! $view_records) {
                     return $query->where('user_id', '=', Auth::user()->id);
@@ -536,7 +546,9 @@ class DashboardController extends Controller
             ->sum('amount');
 
         // COGS using fast FIFO helper shared with Profit & Loss report
-        $cogsPack = $this->calcCogsAndAvgCostFast($request->from, $request->to, (int) $warehouse_id, $array_warehouses_id);
+        $cogsFrom = $request->filled('from') ? $request->from : '2020-01-01';
+        $cogsTo = $request->filled('to') ? $request->to : Carbon::today()->toDateString();
+        $cogsPack = $this->calcCogsAndAvgCostFast($cogsFrom, $cogsTo, (int) $warehouse_id, $array_warehouses_id);
         $cogsFIFO = (float) ($cogsPack['fifo'] ?? 0.0);
 
         $today_profit_numeric = $completedSalesTotal - $cogsFIFO - $expenses_total;

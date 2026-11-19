@@ -11,6 +11,7 @@ use App\Models\Role;
 use App\Models\SaleReturn;
 use App\Models\Setting;
 use App\Models\sms_gateway;
+use App\Models\UserWarehouse;
 use App\utils\helpers;
 use ArPHP\I18N\Arabic;
 use Carbon\Carbon;
@@ -35,8 +36,11 @@ class PaymentSaleReturnsController extends BaseController
         $pageStart = \Request::get('page', 1);
         // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
-        $order = $request->SortField;
-        $dir = $request->SortType;
+        $order = $request->filled('SortField') ? $request->SortField : 'id';
+        $dir = strtolower($request->SortType ?? 'desc');
+        if (! in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'desc';
+        }
         $helpers = new helpers;
         $user = Auth::user();
         // New way: Check user's record_view field (user-level boolean)
@@ -59,13 +63,21 @@ class PaymentSaleReturnsController extends BaseController
 
         // Check If User Has Permission View  All Records
         $Payments = PaymentSaleReturns::with('SaleReturn', 'SaleReturn.client', 'account', 'user')
-            ->where('deleted_at', '=', null)
-            ->whereBetween('date', [$request->from, $request->to])
-            ->where(function ($query) use ($view_records) {
-                if (! $view_records) {
-                    return $query->where('user_id', '=', Auth::user()->id);
-                }
-            });
+            ->where('deleted_at', '=', null);
+
+        if ($request->filled('from') && $request->filled('to')) {
+            $Payments->whereBetween('date', [$request->from, $request->to]);
+        } elseif ($request->filled('from')) {
+            $Payments->where('date', '>=', $request->from);
+        } elseif ($request->filled('to')) {
+            $Payments->where('date', '<=', $request->to);
+        }
+
+        $Payments->where(function ($query) use ($view_records) {
+            if (! $view_records) {
+                return $query->where('user_id', '=', Auth::user()->id);
+            }
+        });
 
         if (! $is_all_warehouses) {
             $Payments->whereHas('SaleReturn', function ($q) use ($warehouse_ids) {

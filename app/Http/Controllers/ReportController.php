@@ -106,8 +106,11 @@ class ReportController extends BaseController
         $pageStart = \Request::get('page', 1);
         // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
-        $order = $request->SortField;
-        $dir = $request->SortType;
+        $order = $request->filled('SortField') ? $request->SortField : 'id';
+        $dir = strtolower($request->SortType ?? 'desc');
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'desc';
+        }
         $data = [];
 
         $from = $request->filled('from') ? $request->from : null;
@@ -561,14 +564,9 @@ class ReportController extends BaseController
     $this->authorizeForUser($request->user('api'), 'ReportPurchases', Purchase::class);
 
     // Normalize date filter to Y-m-d (avoid timezone/invalid input issues)
-    $today = Carbon::today();
-    $from = $request->filled('from')
-        ? Carbon::parse($request->from)->toDateString()
-        : $today->copy()->subDays(29)->toDateString();
-    $to = $request->filled('to')
-        ? Carbon::parse($request->to)->toDateString()
-        : $today->toDateString();
-    if ($from > $to) {
+    $from = $request->filled('from') ? Carbon::parse($request->from)->toDateString() : null;
+    $to = $request->filled('to') ? Carbon::parse($request->to)->toDateString() : null;
+    if ($from && $to && $from > $to) {
         $from = $to;
     }
 
@@ -577,8 +575,11 @@ class ReportController extends BaseController
     $pageStart = \Request::get('page', 1);
     // Start displaying items from this number;
     $offSet = ($pageStart * $perPage) - $perPage;
-    $order = $request->SortField;
-    $dir = $request->SortType;
+    $order = $request->filled('SortField') ? $request->SortField : 'id';
+    $dir = strtolower($request->SortType ?? 'desc');
+    if (!in_array($dir, ['asc', 'desc'], true)) {
+        $dir = 'desc';
+    }
     $helpers = new helpers;
 
     $user = Auth::user();
@@ -620,7 +621,15 @@ class ReportController extends BaseController
         ->with('facture', 'provider', 'warehouse', 'user')
         ->join('providers', 'purchases.provider_id', '=', 'providers.id')
         ->whereNull('purchases.deleted_at')
-        ->whereBetween('purchases.date', [$from, $to])
+        ->when($from && $to, function ($q) use ($from, $to) {
+            $q->whereBetween('purchases.date', [$from, $to]);
+        })
+        ->when($from && ! $to, function ($q) use ($from) {
+            $q->where('purchases.date', '>=', $from);
+        })
+        ->when(! $from && $to, function ($q) use ($to) {
+            $q->where('purchases.date', '<=', $to);
+        })
         // ✅ warehouse restriction
         ->when(! $is_all_warehouses, function ($q) use ($allowedWarehouseIds) {
             $q->whereIn('purchases.warehouse_id', $allowedWarehouseIds);
@@ -722,8 +731,11 @@ class ReportController extends BaseController
     $pageStart = \Request::get('page', 1);
     // Start displaying items from this number;
     $offSet = ($pageStart * $perPage) - $perPage;
-    $order = $request->SortField;
-    $dir = $request->SortType;
+    $order = $request->filled('SortField') ? $request->SortField : 'id';
+    $dir = strtolower($request->SortType ?? 'desc');
+    if (!in_array($dir, ['asc', 'desc'], true)) {
+        $dir = 'desc';
+    }
     $helpers = new helpers;
 
     $user = Auth::user();
@@ -829,8 +841,12 @@ class ReportController extends BaseController
             DB::raw("CONCAT(sales.date, ' ', COALESCE(sales.time, '12:00:00'))"),
             [$startDateTime, $endDateTime]
         );
-    } else {
+    } elseif ($request->filled('from') && $request->filled('to')) {
         $Sales->whereBetween('sales.date', [$request->from, $request->to]);
+    } elseif ($request->filled('from')) {
+        $Sales->where('sales.date', '>=', $request->from);
+    } elseif ($request->filled('to')) {
+        $Sales->where('sales.date', '<=', $request->to);
     }
 
     //  Check If User Has Permission Show All Records
@@ -1139,8 +1155,11 @@ class ReportController extends BaseController
         $pageStart = \Request::get('page', 1);
         // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
-        $order = $request->SortField;
-        $dir = $request->SortType;
+        $order = $request->filled('SortField') ? $request->SortField : 'id';
+        $dir = strtolower($request->SortType ?? 'desc');
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'desc';
+        }
         $data = [];
 
         $from = $request->filled('from') ? $request->from : null;
@@ -2459,8 +2478,11 @@ class ReportController extends BaseController
     {
         $this->authorizeForUser($request->user('api'), 'Reports_profit', Client::class);
 
-        $start = Carbon::parse($request->from)->toDateString();
-        $end = Carbon::parse($request->to)->toDateString();
+        $start = $request->filled('from') ? Carbon::parse($request->from)->toDateString() : '2020-01-01';
+        $end = $request->filled('to') ? Carbon::parse($request->to)->toDateString() : Carbon::today()->toDateString();
+        if ($start > $end) {
+            $start = $end;
+        }
 
         // Warehouses visible to user
         $user = $request->user('api');
@@ -2609,13 +2631,16 @@ class ReportController extends BaseController
     {
         $this->authorizeForUser($request->user('api'), 'Reports_profit', Client::class);
 
-        // Date range (default to last 30 days if not provided)
+        // Date range (default to 2020 if not provided)
         $start = $request->filled('from') 
             ? Carbon::parse($request->from)->toDateString() 
-            : Carbon::now()->subDays(29)->toDateString();
+            : '2020-01-01';
         $end = $request->filled('to') 
             ? Carbon::parse($request->to)->toDateString() 
             : Carbon::now()->toDateString();
+        if ($start > $end) {
+            $start = $end;
+        }
 
         // Warehouses visible to user
         $user = $request->user('api');
@@ -3148,7 +3173,15 @@ class ReportController extends BaseController
                     return $query->where('sales.user_id', '=', Auth::user()->id);
                 }
             })
-            ->whereBetween('sale_details.date', [$request->from, $request->to])
+            ->when($request->filled('from') && $request->filled('to'), function ($q) use ($request) {
+                $q->whereBetween('sale_details.date', [$request->from, $request->to]);
+            })
+            ->when($request->filled('from') && ! $request->filled('to'), function ($q) use ($request) {
+                $q->where('sale_details.date', '>=', $request->from);
+            })
+            ->when(! $request->filled('from') && $request->filled('to'), function ($q) use ($request) {
+                $q->where('sale_details.date', '<=', $request->to);
+            })
             ->where(function ($query) use ($request) {
                 return $query->when($request->filled('search'), function ($query) use ($request) {
                     return $query->where('products.name', 'LIKE', "%{$request->search}%")
@@ -3167,6 +3200,16 @@ class ReportController extends BaseController
         if ($perPage == '-1') {
             $perPage = $totalRows;
         }
+
+        $applyDate = function ($q) use ($request) {
+            if ($request->filled('from') && $request->filled('to')) {
+                $q->whereBetween('date', [$request->from, $request->to]);
+            } elseif ($request->filled('from')) {
+                $q->where('date', '>=', $request->from);
+            } elseif ($request->filled('to')) {
+                $q->where('date', '<=', $request->to);
+            }
+        };
 
         $products = $products_data->offset($offSet)
             ->limit($perPage)
@@ -3252,8 +3295,11 @@ class ReportController extends BaseController
         $pageStart = \Request::get('page', 1);
         // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
-        $order = $request->SortField;
-        $dir = $request->SortType;
+        $order = $request->filled('SortField') ? $request->SortField : 'id';
+        $dir = strtolower($request->SortType ?? 'desc');
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'desc';
+        }
         $data = [];
 
         $users = User::where(function ($query) use ($request) {
@@ -3891,8 +3937,11 @@ class ReportController extends BaseController
         $pageStart = \Request::get('page', 1);
         // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
-        $order = $request->SortField;
-        $dir = $request->SortType;
+        $order = $request->filled('SortField') ? $request->SortField : 'id';
+        $dir = strtolower($request->SortType ?? 'desc');
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'desc';
+        }
         $data = [];
 
         // get warehouses assigned to user
@@ -3925,6 +3974,16 @@ class ReportController extends BaseController
         if ($perPage == '-1') {
             $perPage = $totalRows;
         }
+        $applyDate = function ($q) use ($request) {
+            if ($request->filled('from') && $request->filled('to')) {
+                $q->whereBetween('date', [$request->from, $request->to]);
+            } elseif ($request->filled('from')) {
+                $q->where('date', '>=', $request->from);
+            } elseif ($request->filled('to')) {
+                $q->where('date', '<=', $request->to);
+            }
+        };
+
         $products = $products_data->offset($offSet)
             ->limit($perPage)
             ->orderBy($order, $dir)
@@ -4020,6 +4079,16 @@ class ReportController extends BaseController
         if ($perPage == '-1') {
             $perPage = $totalRows;
         }
+
+        $applyDate = function ($q) use ($request) {
+            if ($request->filled('from') && $request->filled('to')) {
+                $q->whereBetween('date', [$request->from, $request->to]);
+            } elseif ($request->filled('from')) {
+                $q->where('date', '>=', $request->from);
+            } elseif ($request->filled('to')) {
+                $q->where('date', '<=', $request->to);
+            }
+        };
 
         $products = $products_data->offset($offSet)
             ->limit($perPage)
@@ -5345,6 +5414,16 @@ class ReportController extends BaseController
             $perPage = $totalRows;
         }
 
+        $applyDate = function ($q) use ($request) {
+            if ($request->filled('from') && $request->filled('to')) {
+                $q->whereBetween('date', [$request->from, $request->to]);
+            } elseif ($request->filled('from')) {
+                $q->where('date', '>=', $request->from);
+            } elseif ($request->filled('to')) {
+                $q->where('date', '<=', $request->to);
+            }
+        };
+
         $products = $products_data->offset($offSet)
             ->limit($perPage)
             ->get();
@@ -5379,7 +5458,7 @@ class ReportController extends BaseController
 
                         }
                     })
-                    ->whereBetween('date', [$request->from, $request->to])
+                    ->where($applyDate)
                     ->sum('total');
 
                 $lims_product_sale_data = SaleDetail::select('sale_unit_id', 'quantity')->with('sale')->where('product_id', $product->id)
@@ -5403,7 +5482,7 @@ class ReportController extends BaseController
 
                         }
                     })
-                    ->whereBetween('date', [$request->from, $request->to])
+                    ->where($applyDate)
                     ->get();
 
                 $sold_qty = 0;
@@ -5453,7 +5532,7 @@ class ReportController extends BaseController
 
                         }
                     })
-                    ->whereBetween('date', [$request->from, $request->to])
+                    ->where($applyDate)
                     ->sum('total');
 
                 $sold_qty = SaleDetail::select('sale_unit_id', 'quantity')->with('sale')->where('product_id', $product->id)
@@ -5477,7 +5556,7 @@ class ReportController extends BaseController
 
                         }
                     })
-                    ->whereBetween('date', [$request->from, $request->to])
+                    ->where($applyDate)
                     ->sum('quantity');
 
                 $nestedData['sold_qty'] = $sold_qty;
@@ -5545,7 +5624,15 @@ class ReportController extends BaseController
                     });
                 }
             })
-            ->whereBetween('date', [$request->from, $request->to])
+            ->when($request->filled('from') && $request->filled('to'), function ($query) use ($request) {
+                return $query->whereBetween('date', [$request->from, $request->to]);
+            })
+            ->when($request->filled('from') && ! $request->filled('to'), function ($query) use ($request) {
+                return $query->where('date', '>=', $request->from);
+            })
+            ->when(! $request->filled('from') && $request->filled('to'), function ($query) use ($request) {
+                return $query->where('date', '<=', $request->to);
+            })
             ->where('product_id', $request->id)
 
             // Filters
@@ -5694,16 +5781,21 @@ class ReportController extends BaseController
         $this->authorizeForUser($request->user('api'), 'product_sales_report', Sale::class);
 
         // Normalize date filter to Y-m-d (avoid timezone/invalid input issues)
-        $today = Carbon::today();
-        $from = $request->filled('from')
-            ? Carbon::parse($request->from)->toDateString()
-            : $today->copy()->subDays(29)->toDateString();
-        $to = $request->filled('to')
-            ? Carbon::parse($request->to)->toDateString()
-            : $today->toDateString();
-        if ($from > $to) {
+        $from = $request->filled('from') ? Carbon::parse($request->from)->toDateString() : null;
+        $to = $request->filled('to') ? Carbon::parse($request->to)->toDateString() : null;
+        if ($from && $to && $from > $to) {
             $from = $to;
         }
+
+        $applyDate = function ($q, $col = 'date') use ($from, $to) {
+            if ($from && $to) {
+                $q->whereBetween($col, [$from, $to]);
+            } elseif ($from) {
+                $q->where($col, '>=', $from);
+            } elseif ($to) {
+                $q->where($col, '<=', $to);
+            }
+        };
 
         $user = Auth::user();
         // New way: Check user's record_view field (user-level boolean)
@@ -5734,8 +5826,11 @@ class ReportController extends BaseController
         $pageStart = \Request::get('page', 1);
         // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
-        $order = $request->SortField;
-        $dir = $request->SortType;
+        $order = $request->filled('SortField') ? $request->SortField : 'id';
+        $dir = strtolower($request->SortType ?? 'desc');
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'desc';
+        }
         $helpers = new helpers;
 
         // Filter fields With Params to retrieve
@@ -5765,7 +5860,9 @@ class ReportController extends BaseController
                     });
                 }
             })
-            ->whereBetween('date', [$from, $to]);
+            ->when($from && $to, fn ($q) => $q->whereBetween('date', [$from, $to]))
+            ->when($from && ! $to, fn ($q) => $q->where('date', '>=', $from))
+            ->when(! $from && $to, fn ($q) => $q->where('date', '<=', $to));
 
         // Filter
         $sale_details_Filtred = $sale_details_data
@@ -5886,16 +5983,21 @@ class ReportController extends BaseController
         $this->authorizeForUser($request->user('api'), 'product_purchases_report', Purchase::class);
 
         // Normalize date filter to Y-m-d (avoid timezone/invalid input issues)
-        $today = Carbon::today();
-        $from = $request->filled('from')
-            ? Carbon::parse($request->from)->toDateString()
-            : $today->copy()->subDays(29)->toDateString();
-        $to = $request->filled('to')
-            ? Carbon::parse($request->to)->toDateString()
-            : $today->toDateString();
-        if ($from > $to) {
+        $from = $request->filled('from') ? Carbon::parse($request->from)->toDateString() : null;
+        $to = $request->filled('to') ? Carbon::parse($request->to)->toDateString() : null;
+        if ($from && $to && $from > $to) {
             $from = $to;
         }
+
+        $applyDate = function ($q, $col = 'date') use ($from, $to) {
+            if ($from && $to) {
+                $q->whereBetween($col, [$from, $to]);
+            } elseif ($from) {
+                $q->where($col, '>=', $from);
+            } elseif ($to) {
+                $q->where($col, '<=', $to);
+            }
+        };
 
         $user = Auth::user();
         // New way: Check user's record_view field (user-level boolean)
@@ -5926,8 +6028,11 @@ class ReportController extends BaseController
         $pageStart = \Request::get('page', 1);
         // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
-        $order = $request->SortField;
-        $dir = $request->SortType;
+        $order = $request->filled('SortField') ? $request->SortField : 'id';
+        $dir = strtolower($request->SortType ?? 'desc');
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'desc';
+        }
         $helpers = new helpers;
 
         // Filter fields With Params to retrieve
@@ -5957,9 +6062,19 @@ class ReportController extends BaseController
                     });
                 }
             })
-            ->where(function ($query) use ($from, $to) {
+            ->when($from && $to, function ($query) use ($from, $to) {
                 return $query->whereHas('purchase', function ($q) use ($from, $to) {
                     $q->whereBetween('date', [$from, $to]);
+                });
+            })
+            ->when($from && ! $to, function ($query) use ($from) {
+                return $query->whereHas('purchase', function ($q) use ($from) {
+                    $q->where('date', '>=', $from);
+                });
+            })
+            ->when(! $from && $to, function ($query) use ($to) {
+                return $query->whereHas('purchase', function ($q) use ($to) {
+                    $q->where('date', '<=', $to);
                 });
             });
 
@@ -6670,24 +6785,32 @@ class ReportController extends BaseController
         $this->authorizeForUser($request->user('api'), 'expenses_report', Expense::class);
 
         // Normalize date filter to Y-m-d (avoid timezone/invalid input issues)
-        $today = Carbon::today();
-        $from = $request->filled('from')
-            ? Carbon::parse($request->from)->toDateString()
-            : $today->copy()->subDays(29)->toDateString();
-        $to = $request->filled('to')
-            ? Carbon::parse($request->to)->toDateString()
-            : $today->toDateString();
-        if ($from > $to) {
+        $from = $request->filled('from') ? Carbon::parse($request->from)->toDateString() : null;
+        $to = $request->filled('to') ? Carbon::parse($request->to)->toDateString() : null;
+        if ($from && $to && $from > $to) {
             $from = $to;
         }
+
+        $applyDate = function ($q, $col = 'date') use ($from, $to) {
+            if ($from && $to) {
+                $q->whereBetween($col, [$from, $to]);
+            } elseif ($from) {
+                $q->where($col, '>=', $from);
+            } elseif ($to) {
+                $q->where($col, '<=', $to);
+            }
+        };
 
         // How many items do you want to display.
         $perPage = $request->limit;
         $pageStart = \Request::get('page', 1);
         // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
-        $order = $request->SortField;
-        $dir = $request->SortType;
+        $order = $request->filled('SortField') ? $request->SortField : 'id';
+        $dir = strtolower($request->SortType ?? 'desc');
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'desc';
+        }
         $data = [];
 
         $helpers = new helpers;
@@ -6719,7 +6842,9 @@ class ReportController extends BaseController
 
                 }
             })
-            ->whereBetween('expenses.date', [$from, $to])
+            ->when($from && $to, fn ($q) => $q->whereBetween('expenses.date', [$from, $to]))
+            ->when($from && ! $to, fn ($q) => $q->where('expenses.date', '>=', $from))
+            ->when(! $from && $to, fn ($q) => $q->where('expenses.date', '<=', $to))
 
         // Search With Multiple Param
             ->where(function ($query) use ($request) {
@@ -6776,31 +6901,41 @@ class ReportController extends BaseController
         $this->authorizeForUser($request->user('api'), 'deposits_report', Deposit::class);
 
         // Normalize date filter to Y-m-d (avoid timezone/invalid input issues)
-        $today = Carbon::today();
-        $from = $request->filled('from')
-            ? Carbon::parse($request->from)->toDateString()
-            : $today->copy()->subDays(29)->toDateString();
-        $to = $request->filled('to')
-            ? Carbon::parse($request->to)->toDateString()
-            : $today->toDateString();
-        if ($from > $to) {
+        $from = $request->filled('from') ? Carbon::parse($request->from)->toDateString() : null;
+        $to = $request->filled('to') ? Carbon::parse($request->to)->toDateString() : null;
+        if ($from && $to && $from > $to) {
             $from = $to;
         }
+
+        $applyDate = function ($q, $col = 'date') use ($from, $to) {
+            if ($from && $to) {
+                $q->whereBetween($col, [$from, $to]);
+            } elseif ($from) {
+                $q->where($col, '>=', $from);
+            } elseif ($to) {
+                $q->where($col, '<=', $to);
+            }
+        };
 
         // How many items do you want to display.
         $perPage = $request->limit;
         $pageStart = \Request::get('page', 1);
         // Start displaying items from this number;
         $offSet = ($pageStart * $perPage) - $perPage;
-        $order = $request->SortField;
-        $dir = $request->SortType;
+        $order = $request->filled('SortField') ? $request->SortField : 'id';
+        $dir = strtolower($request->SortType ?? 'desc');
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'desc';
+        }
         $data = [];
 
         $helpers = new helpers;
 
         $deposits_data = Deposit::join('deposit_categories', 'deposits.deposit_category_id', '=', 'deposit_categories.id')
             ->where('deposits.deleted_at', '=', null)
-            ->whereBetween('deposits.date', [$from, $to])
+            ->when($from && $to, fn ($q) => $q->whereBetween('deposits.date', [$from, $to]))
+            ->when($from && ! $to, fn ($q) => $q->where('deposits.date', '>=', $from))
+            ->when(! $from && $to, fn ($q) => $q->where('deposits.date', '<=', $to))
 
         // Search With Multiple Param
             ->where(function ($query) use ($request) {
@@ -6849,22 +6984,30 @@ class ReportController extends BaseController
         $this->authorizeForUser($request->user('api'), 'report_transactions', PaymentSale::class);
 
         // Normalize date filter to Y-m-d (avoid timezone/invalid input issues)
-        $today = Carbon::today();
-        $from = $request->filled('from')
-            ? Carbon::parse($request->from)->toDateString()
-            : $today->copy()->subDays(29)->toDateString();
-        $to = $request->filled('to')
-            ? Carbon::parse($request->to)->toDateString()
-            : $today->toDateString();
-        if ($from > $to) {
+        $from = $request->filled('from') ? Carbon::parse($request->from)->toDateString() : null;
+        $to = $request->filled('to') ? Carbon::parse($request->to)->toDateString() : null;
+        if ($from && $to && $from > $to) {
             $from = $to;
         }
+
+        $applyDate = function ($q, $col = 'date') use ($from, $to) {
+            if ($from && $to) {
+                $q->whereBetween($col, [$from, $to]);
+            } elseif ($from) {
+                $q->where($col, '>=', $from);
+            } elseif ($to) {
+                $q->where($col, '<=', $to);
+            }
+        };
 
         $perPage = $request->limit;
         $pageStart = \Request::get('page', 1);
         $offSet = ($pageStart * $perPage) - $perPage;
-        $order = $request->SortField;
-        $dir = $request->SortType;
+        $order = $request->filled('SortField') ? $request->SortField : 'id';
+        $dir = strtolower($request->SortType ?? 'desc');
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'desc';
+        }
 
         $helpers = new helpers;
         $user = Auth::user();
@@ -6892,7 +7035,7 @@ class ReportController extends BaseController
         if (! $onlyProviderFilter) {
             $paymentSales = PaymentSale::with(['sale.client', 'account', 'payment_method', 'user'])
                 ->whereNull('deleted_at')
-                ->whereBetween('date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'date'))
                 ->when(! $view_records, fn ($q) => $q->where('user_id', Auth::id()))
                  // ✅ Restrict by warehouses through Sale
                 ->when(! $is_all_warehouses, function ($q) use ($warehouse_ids) {
@@ -6934,7 +7077,7 @@ class ReportController extends BaseController
             // Client opening balance payments (counted on the sales/inflow side)
             $clientOpeningPayments = PaymentOpeningBalance::with(['client', 'account', 'payment_method', 'user'])
                 ->whereNull('deleted_at')
-                ->whereBetween('date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'date'))
                 ->when(! $view_records, fn ($q) => $q->where('user_id', Auth::id()))
                 ->when($request->filled('client_id'), fn ($q) => $q->where('client_id', $request->client_id))
                 ->when($request->filled('payment_method_id'), fn ($q) => $q->where('payment_method_id', $request->payment_method_id))
@@ -6968,7 +7111,7 @@ class ReportController extends BaseController
             // Sale-return refunds (cash paid out to customer)
             $paymentSaleReturns = PaymentSaleReturns::with(['SaleReturn.client', 'account', 'payment_method', 'user'])
                 ->whereNull('payment_sale_returns.deleted_at')
-                ->whereBetween('payment_sale_returns.date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'payment_sale_returns.date'))
                 ->when(! $view_records, fn ($q) => $q->where('user_id', Auth::id()))
                 ->when(! $is_all_warehouses, function ($q) use ($warehouse_ids) {
                     $q->whereHas('SaleReturn', fn ($s) => $s->whereIn('warehouse_id', $warehouse_ids));
@@ -7010,7 +7153,7 @@ class ReportController extends BaseController
         if (! $onlyClientFilter) {
             $paymentPurchases = PaymentPurchase::with(['purchase.provider', 'account', 'payment_method', 'user'])
                 ->whereNull('deleted_at')
-                ->whereBetween('date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'date'))
                 ->when(! $view_records, fn ($q) => $q->where('user_id', Auth::id()))
                  // ✅ Restrict by warehouses through Purchase (requires purchases.warehouse_id)
                 ->when(! $is_all_warehouses, function ($q) use ($warehouse_ids) {
@@ -7052,7 +7195,7 @@ class ReportController extends BaseController
             // Provider opening balance payments (counted on the purchases/outflow side)
             $providerOpeningPayments = ProviderPaymentOpeningBalance::with(['provider', 'account', 'payment_method', 'user'])
                 ->whereNull('deleted_at')
-                ->whereBetween('date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'date'))
                 ->when(! $view_records, fn ($q) => $q->where('user_id', Auth::id()))
                 ->when($request->filled('provider_id'), fn ($q) => $q->where('provider_id', $request->provider_id))
                 ->when($request->filled('payment_method_id'), fn ($q) => $q->where('payment_method_id', $request->payment_method_id))
@@ -7086,7 +7229,7 @@ class ReportController extends BaseController
             // Purchase-return refunds (cash received back from supplier)
             $paymentPurchaseReturns = PaymentPurchaseReturns::with(['PurchaseReturn.provider', 'account', 'payment_method', 'user'])
                 ->whereNull('payment_purchase_returns.deleted_at')
-                ->whereBetween('payment_purchase_returns.date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'payment_purchase_returns.date'))
                 ->when(! $view_records, fn ($q) => $q->where('user_id', Auth::id()))
                 ->when(! $is_all_warehouses, function ($q) use ($warehouse_ids) {
                     $q->whereHas('PurchaseReturn', fn ($p) => $p->whereIn('warehouse_id', $warehouse_ids));
@@ -7149,9 +7292,9 @@ class ReportController extends BaseController
         $payment_methods = PaymentMethod::whereNull('deleted_at')->get(['id', 'name']);
 
         // Summary Totals By Payment Method
-       $paymentSummary = PaymentMethod::whereNull('deleted_at')->get()->map(function ($method) use ($from, $to, $is_all_warehouses, $warehouse_ids) {
+       $paymentSummary = PaymentMethod::whereNull('deleted_at')->get()->map(function ($method) use ($applyDate, $is_all_warehouses, $warehouse_ids) {
             $purchaseTotal = PaymentPurchase::whereNull('deleted_at')->where('payment_method_id', $method->id)
-                ->whereBetween('date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'date'))
                 ->when(! $is_all_warehouses, function ($q) use ($warehouse_ids) {
                     $q->whereHas('purchase', fn ($p) => $p->whereIn('warehouse_id', $warehouse_ids));
                 })
@@ -7159,11 +7302,11 @@ class ReportController extends BaseController
 
             $providerOpeningTotal = ProviderPaymentOpeningBalance::whereNull('deleted_at')
                 ->where('payment_method_id', $method->id)
-                ->whereBetween('date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'date'))
                 ->sum('montant');
 
             $saleTotal = PaymentSale::whereNull('deleted_at')->where('payment_method_id', $method->id)
-                ->whereBetween('date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'date'))
                 ->when(! $is_all_warehouses, function ($q) use ($warehouse_ids) {
                     $q->whereHas('sale', fn ($s) => $s->whereIn('warehouse_id', $warehouse_ids));
                 })
@@ -7171,12 +7314,12 @@ class ReportController extends BaseController
 
             $clientOpeningTotal = PaymentOpeningBalance::whereNull('deleted_at')
                 ->where('payment_method_id', $method->id)
-                ->whereBetween('date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'date'))
                 ->sum('montant');
 
             $saleReturnTotal = PaymentSaleReturns::whereNull('payment_sale_returns.deleted_at')
                 ->where('payment_method_id', $method->id)
-                ->whereBetween('payment_sale_returns.date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'payment_sale_returns.date'))
                 ->when(! $is_all_warehouses, function ($q) use ($warehouse_ids) {
                     $q->whereHas('SaleReturn', fn ($s) => $s->whereIn('warehouse_id', $warehouse_ids));
                 })
@@ -7184,14 +7327,14 @@ class ReportController extends BaseController
 
             $purchaseReturnTotal = PaymentPurchaseReturns::whereNull('payment_purchase_returns.deleted_at')
                 ->where('payment_method_id', $method->id)
-                ->whereBetween('payment_purchase_returns.date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'payment_purchase_returns.date'))
                 ->when(! $is_all_warehouses, function ($q) use ($warehouse_ids) {
                     $q->whereHas('PurchaseReturn', fn ($p) => $p->whereIn('warehouse_id', $warehouse_ids));
                 })
                 ->sum('montant');
 
             $expenseTotal = Expense::whereNull('deleted_at')->where('payment_method_id', $method->id)
-                ->whereBetween('date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'date'))
                 ->when(! $is_all_warehouses, fn ($q) => $q->whereIn('warehouse_id', $warehouse_ids))
                 ->sum('amount');
 
@@ -7224,8 +7367,21 @@ class ReportController extends BaseController
         // Reuse an existing report permission to avoid DB/permission changes
         $this->authorizeForUser($request->user('api'), 'cash_flow_report', PaymentSale::class);
 
-        $from = $request->from;
-        $to   = $request->to;
+        $from = $request->filled('from') ? Carbon::parse($request->from)->toDateString() : null;
+        $to   = $request->filled('to') ? Carbon::parse($request->to)->toDateString() : null;
+        if ($from && $to && $from > $to) {
+            $from = $to;
+        }
+
+        $applyDate = function ($q, $col = 'date') use ($from, $to) {
+            if ($from && $to) {
+                $q->whereBetween($col, [$from, $to]);
+            } elseif ($from) {
+                $q->where($col, '>=', $from);
+            } elseif ($to) {
+                $q->where($col, '<=', $to);
+            }
+        };
 
         $groupBy = $request->group_by === 'method' ? 'method' : 'account';
 
@@ -7278,7 +7434,7 @@ class ReportController extends BaseController
                 ->leftJoin('sales', 'payment_sales.sale_id', '=', 'sales.id')
                 ->leftJoin('payment_methods', 'payment_sales.payment_method_id', '=', 'payment_methods.id')
                 ->whereNull('payment_sales.deleted_at')
-                ->whereBetween('payment_sales.date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'payment_sales.date'))
                 ->when(! $viewRecords, fn ($q) => $q->where('payment_sales.user_id', Auth::id()))
                 ->when($paymentMethodId, fn ($q) => $q->where('payment_sales.payment_method_id', $paymentMethodId))
                 // ✅ restrict by user warehouses (sale.warehouse_id)
@@ -7300,7 +7456,7 @@ class ReportController extends BaseController
                 ->leftJoin('sales', 'payment_sales.sale_id', '=', 'sales.id')
                 ->leftJoin('accounts', 'payment_sales.account_id', '=', 'accounts.id')
                 ->whereNull('payment_sales.deleted_at')
-                ->whereBetween('payment_sales.date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'payment_sales.date'))
                 ->when(! $viewRecords, fn ($q) => $q->where('payment_sales.user_id', Auth::id()))
                 ->when($accountId, fn ($q) => $q->where('payment_sales.account_id', $accountId))
                 // ✅ restrict by user warehouses (sale.warehouse_id)
@@ -7330,7 +7486,7 @@ class ReportController extends BaseController
             $q = Deposit::query()
                 ->leftJoin('accounts', 'deposits.account_id', '=', 'accounts.id')
                 ->whereNull('deposits.deleted_at')
-                ->whereBetween('deposits.date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'deposits.date'))
                 ->when($accountId, fn ($q) => $q->where('deposits.account_id', $accountId))
                 // ✅ restrict by user warehouses if deposits has warehouse_id
                 ->when(
@@ -7355,7 +7511,7 @@ class ReportController extends BaseController
             // When grouping by method, deposits have no payment method; show under a synthetic group
             $depositQuery = Deposit::query()
                 ->whereNull('deleted_at')
-                ->whereBetween('date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'date'))
                 ->when(
                     Schema::hasColumn('deposits', 'warehouse_id') && ! $is_all_warehouses,
                     fn ($q) => $q->whereIn('warehouse_id', $warehouse_ids)
@@ -7383,7 +7539,7 @@ class ReportController extends BaseController
                 ->leftJoin('purchases', 'payment_purchases.purchase_id', '=', 'purchases.id')
                 ->leftJoin('payment_methods', 'payment_purchases.payment_method_id', '=', 'payment_methods.id')
                 ->whereNull('payment_purchases.deleted_at')
-                ->whereBetween('payment_purchases.date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'payment_purchases.date'))
                 ->when(! $viewRecords, fn ($q) => $q->where('payment_purchases.user_id', Auth::id()))
                 ->when($paymentMethodId, fn ($q) => $q->where('payment_purchases.payment_method_id', $paymentMethodId))
                 // ✅ restrict by user warehouses (purchase.warehouse_id)
@@ -7404,7 +7560,7 @@ class ReportController extends BaseController
                 ->leftJoin('purchases', 'payment_purchases.purchase_id', '=', 'purchases.id')
                 ->leftJoin('accounts', 'payment_purchases.account_id', '=', 'accounts.id')
                 ->whereNull('payment_purchases.deleted_at')
-                ->whereBetween('payment_purchases.date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'payment_purchases.date'))
                 ->when(! $viewRecords, fn ($q) => $q->where('payment_purchases.user_id', Auth::id()))
                 ->when($accountId, fn ($q) => $q->where('payment_purchases.account_id', $accountId))
                 // ✅ restrict by user warehouses (purchase.warehouse_id)
@@ -7432,7 +7588,7 @@ class ReportController extends BaseController
             $q = Expense::query()
                 ->leftJoin('payment_methods', 'expenses.payment_method_id', '=', 'payment_methods.id')
                 ->whereNull('expenses.deleted_at')
-                ->whereBetween('expenses.date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'expenses.date'))
                 ->when($paymentMethodId, fn ($q) => $q->where('expenses.payment_method_id', $paymentMethodId))
                 // ✅ restrict by user warehouses
                 ->when(! $is_all_warehouses, fn ($q) => $q->whereIn('expenses.warehouse_id', $warehouse_ids))
@@ -7451,7 +7607,7 @@ class ReportController extends BaseController
             $q = Expense::query()
                 ->leftJoin('accounts', 'expenses.account_id', '=', 'accounts.id')
                 ->whereNull('expenses.deleted_at')
-                ->whereBetween('expenses.date', [$from, $to])
+                ->tap(fn ($q) => $applyDate($q, 'expenses.date'))
                 ->when($accountId, fn ($q) => $q->where('expenses.account_id', $accountId))
                 // ✅ restrict by user warehouses
                 ->when(! $is_all_warehouses, fn ($q) => $q->whereIn('expenses.warehouse_id', $warehouse_ids))
@@ -7497,7 +7653,7 @@ class ReportController extends BaseController
         $psByDate = PaymentSale::query()
             ->leftJoin('sales', 'payment_sales.sale_id', '=', 'sales.id')
             ->whereNull('payment_sales.deleted_at')
-            ->whereBetween('payment_sales.date', [$from, $to])
+            ->tap(fn ($q) => $applyDate($q, 'payment_sales.date'))
             ->when(! $viewRecords, fn ($q) => $q->where('payment_sales.user_id', Auth::id()))
             // ✅ restrict by user warehouses
             ->when(! $is_all_warehouses, fn ($q) => $q->whereIn('sales.warehouse_id', $warehouse_ids))
@@ -7512,7 +7668,7 @@ class ReportController extends BaseController
 
         $depByDateQuery = Deposit::query()
             ->whereNull('deleted_at')
-            ->whereBetween('date', [$from, $to])
+            ->tap(fn ($q) => $applyDate($q, 'date'))
             // ✅ restrict by user warehouses if deposits has warehouse_id
             ->when(
                 Schema::hasColumn('deposits', 'warehouse_id') && ! $is_all_warehouses,
@@ -7535,7 +7691,7 @@ class ReportController extends BaseController
         $ppByDate = PaymentPurchase::query()
             ->leftJoin('purchases', 'payment_purchases.purchase_id', '=', 'purchases.id')
             ->whereNull('payment_purchases.deleted_at')
-            ->whereBetween('payment_purchases.date', [$from, $to])
+            ->tap(fn ($q) => $applyDate($q, 'payment_purchases.date'))
             ->when(! $viewRecords, fn ($q) => $q->where('payment_purchases.user_id', Auth::id()))
             // ✅ restrict by user warehouses
             ->when(! $is_all_warehouses, fn ($q) => $q->whereIn('purchases.warehouse_id', $warehouse_ids))
@@ -7550,7 +7706,7 @@ class ReportController extends BaseController
 
         $expByDate = Expense::query()
             ->whereNull('deleted_at')
-            ->whereBetween('date', [$from, $to])
+            ->tap(fn ($q) => $applyDate($q, 'date'))
             // ✅ restrict by user warehouses
             ->when(! $is_all_warehouses, fn ($q) => $q->whereIn('warehouse_id', $warehouse_ids))
             ->when($warehouseId, fn ($q) => $q->where('warehouse_id', $warehouseId))
@@ -7611,14 +7767,9 @@ class ReportController extends BaseController
     $this->authorizeForUser($request->user('api'), 'report_sales_by_category', Sale::class);
 
     // Normalize date filter to Y-m-d (avoid timezone/invalid input issues)
-    $today = Carbon::today();
-    $from = $request->filled('from')
-        ? Carbon::parse($request->from)->toDateString()
-        : $today->copy()->subDays(29)->toDateString();
-    $to = $request->filled('to')
-        ? Carbon::parse($request->to)->toDateString()
-        : $today->toDateString();
-    if ($from > $to) {
+    $from = $request->filled('from') ? Carbon::parse($request->from)->toDateString() : null;
+    $to = $request->filled('to') ? Carbon::parse($request->to)->toDateString() : null;
+    if ($from && $to && $from > $to) {
         $from = $to;
     }
 
@@ -7660,7 +7811,9 @@ class ReportController extends BaseController
         ->where(function ($query) use ($from, $to) {
             $query->where(function ($qq) use ($from, $to) {
                 $qq->whereNull('sales.deleted_at')
-                    ->whereBetween('sales.date', [$from, $to]);
+                    ->when($from && $to, fn ($q) => $q->whereBetween('sales.date', [$from, $to]))
+                    ->when($from && ! $to, fn ($q) => $q->where('sales.date', '>=', $from))
+                    ->when(! $from && $to, fn ($q) => $q->where('sales.date', '<=', $to));
             })
             ->orWhereNull('sales.date'); // categories without sales
         })
@@ -7711,14 +7864,9 @@ public function sales_by_brand_report(Request $request)
     $this->authorizeForUser($request->user('api'), 'report_sales_by_brand', Sale::class);
 
     // Normalize date filter to Y-m-d (avoid timezone/invalid input issues)
-    $today = Carbon::today();
-    $from = $request->filled('from')
-        ? Carbon::parse($request->from)->toDateString()
-        : $today->copy()->subDays(29)->toDateString();
-    $to = $request->filled('to')
-        ? Carbon::parse($request->to)->toDateString()
-        : $today->toDateString();
-    if ($from > $to) {
+    $from = $request->filled('from') ? Carbon::parse($request->from)->toDateString() : null;
+    $to = $request->filled('to') ? Carbon::parse($request->to)->toDateString() : null;
+    if ($from && $to && $from > $to) {
         $from = $to;
     }
 
@@ -7760,7 +7908,9 @@ public function sales_by_brand_report(Request $request)
         ->where(function ($query) use ($from, $to) {
             $query->where(function ($qq) use ($from, $to) {
                 $qq->whereNull('sales.deleted_at')
-                    ->whereBetween('sales.date', [$from, $to]);
+                    ->when($from && $to, fn ($q) => $q->whereBetween('sales.date', [$from, $to]))
+                    ->when($from && ! $to, fn ($q) => $q->where('sales.date', '>=', $from))
+                    ->when(! $from && $to, fn ($q) => $q->where('sales.date', '<=', $to));
             })
             ->orWhereNull('sales.date'); // brands without sales
         })
@@ -10067,14 +10217,9 @@ public function draftInvoices(Request $request)
     {
         $this->authorizeForUser($request->user('api'), 'margin_report', Sale::class);
 
-        $today = Carbon::today();
-        $from = $request->filled('from')
-            ? Carbon::parse($request->from)->toDateString()
-            : $today->copy()->subDays(29)->toDateString();
-        $to = $request->filled('to')
-            ? Carbon::parse($request->to)->toDateString()
-            : $today->toDateString();
-        if ($from > $to) {
+        $from = $request->filled('from') ? Carbon::parse($request->from)->toDateString() : null;
+        $to = $request->filled('to') ? Carbon::parse($request->to)->toDateString() : null;
+        if ($from && $to && $from > $to) {
             $from = $to;
         }
 
@@ -10096,7 +10241,12 @@ public function draftInvoices(Request $request)
         $perPage = $request->filled('limit') ? (int) $request->limit : 10;
         $page    = max(1, (int) $request->get('page', 1));
         $offSet  = ($page * $perPage) - $perPage;
-        $order   = $request->filled('SortField') ? $request->SortField : 'total_sale_amount';
+        $sortField = $request->SortField;
+        if ($sortField === 'id') {
+            $order = 'sale_details.id';
+        } else {
+            $order = $request->filled('SortField') ? $request->SortField : 'total_sale_amount';
+        }
         $dir     = $request->filled('SortType')  ? $request->SortType  : 'desc';
 
         // Build base query grouped by product + warehouse
@@ -10109,7 +10259,9 @@ public function draftInvoices(Request $request)
             })
             ->whereNull('sales.deleted_at')
             ->whereNull('products.deleted_at')
-            ->whereBetween('sale_details.date', [$from, $to])
+            ->when($from && $to, fn($q) => $q->whereBetween('sale_details.date', [$from, $to]))
+            ->when($from && !$to, fn($q) => $q->where('sale_details.date', '>=', $from))
+            ->when(!$from && $to, fn($q) => $q->where('sale_details.date', '<=', $to))
             ->where(function ($q) use ($view_records) {
                 if (!$view_records) {
                     $q->where('sales.user_id', Auth::id());
@@ -10180,7 +10332,9 @@ public function draftInvoices(Request $request)
             ->join('products', 'sale_details.product_id', '=', 'products.id')
             ->whereNull('sales.deleted_at')
             ->whereNull('products.deleted_at')
-            ->whereBetween('sale_details.date', [$from, $to])
+            ->when($from && $to, fn($q) => $q->whereBetween('sale_details.date', [$from, $to]))
+            ->when($from && !$to, fn($q) => $q->where('sale_details.date', '>=', $from))
+            ->when(!$from && $to, fn($q) => $q->where('sale_details.date', '<=', $to))
             ->where(function ($q) use ($view_records) {
                 if (!$view_records) {
                     $q->where('sales.user_id', Auth::id());
