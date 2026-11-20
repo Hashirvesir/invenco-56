@@ -195,52 +195,6 @@ class AccountingSyncService
             }
         }
 
-        // 7. Backfill any unlinked sales, purchases, payments, expenses
-        $existingSaleIds = DB::table('acc_journal_entries')->where('reference_type', 'sale')->pluck('reference_id')->toArray();
-        $missingSales = \App\Models\Sale::whereNull('deleted_at')
-            ->where('GrandTotal', '>', 0)
-            ->whereNotIn('id', $existingSaleIds)
-            ->get();
-        foreach ($missingSales as $s) {
-            AccountingHelper::fromSale($s);
-        }
-
-        $existingPaymentSaleIds = DB::table('acc_journal_entries')->where('reference_type', 'payment_sale')->pluck('reference_id')->toArray();
-        $missingPaymentSales = \App\Models\PaymentSale::whereNull('deleted_at')
-            ->where('montant', '>', 0)
-            ->whereNotIn('id', $existingPaymentSaleIds)
-            ->get();
-        foreach ($missingPaymentSales as $ps) {
-            AccountingHelper::fromPaymentSale($ps);
-        }
-
-        $existingPurchaseIds = DB::table('acc_journal_entries')->where('reference_type', 'purchase')->pluck('reference_id')->toArray();
-        $missingPurchases = \App\Models\Purchase::whereNull('deleted_at')
-            ->where('GrandTotal', '>', 0)
-            ->whereNotIn('id', $existingPurchaseIds)
-            ->get();
-        foreach ($missingPurchases as $p) {
-            AccountingHelper::fromPurchase($p);
-        }
-
-        $existingPaymentPurchaseIds = DB::table('acc_journal_entries')->where('reference_type', 'payment_purchase')->pluck('reference_id')->toArray();
-        $missingPaymentPurchases = \App\Models\PaymentPurchase::whereNull('deleted_at')
-            ->where('montant', '>', 0)
-            ->whereNotIn('id', $existingPaymentPurchaseIds)
-            ->get();
-        foreach ($missingPaymentPurchases as $pp) {
-            AccountingHelper::fromPaymentPurchase($pp);
-        }
-
-        $existingExpenseIds = DB::table('acc_journal_entries')->where('reference_type', 'expense')->pluck('reference_id')->toArray();
-        $missingExpenses = \App\Models\Expense::whereNull('deleted_at')
-            ->where('amount', '>', 0)
-            ->whereNotIn('id', $existingExpenseIds)
-            ->get();
-        foreach ($missingExpenses as $e) {
-            AccountingHelper::fromExpense($e);
-        }
-
         return ['status' => 'success', 'synced_accounts' => $synced];
     }
 

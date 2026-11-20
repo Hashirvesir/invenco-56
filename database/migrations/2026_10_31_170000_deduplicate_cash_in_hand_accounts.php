@@ -12,7 +12,6 @@ return new class extends Migration
     {
         try {
             AccountingSyncService::deduplicateCashAccounts();
-            AccountingSyncService::syncAll();
         } catch (\Throwable $e) {
             // best-effort
         }
