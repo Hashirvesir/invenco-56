@@ -1686,6 +1686,39 @@ class SalesController extends BaseController
                 }
             })->orderBy('id', 'DESC')->get();
 
+        foreach ($payments as $payment) {
+            $saleDate = $Sale->date;
+            $paymentDate = $payment->date;
+            $isOldPayment = false;
+            $daysDiff = 0;
+            $paymentDelayNote = null;
+
+            if ($saleDate && $paymentDate) {
+                try {
+                    $saleCarbon = \Carbon\Carbon::parse($saleDate)->startOfDay();
+                    $paymentCarbon = \Carbon\Carbon::parse($paymentDate)->startOfDay();
+
+                    if ($paymentCarbon->gt($saleCarbon)) {
+                        $isOldPayment = true;
+                        $daysDiff = (int) $saleCarbon->diffInDays($paymentCarbon);
+                        $paymentDelayNote = $daysDiff == 1 ? "Paid 1 day after sale" : "Paid {$daysDiff} days after sale";
+                    } elseif ($paymentCarbon->lt($saleCarbon)) {
+                        $daysDiff = (int) $paymentCarbon->diffInDays($saleCarbon);
+                        $paymentDelayNote = "Advance payment ({$daysDiff} days prior)";
+                    } else {
+                        $paymentDelayNote = "Same day payment";
+                    }
+                } catch (\Exception $e) {
+                    $paymentDelayNote = null;
+                }
+            }
+
+            $payment->sale_date = $saleDate;
+            $payment->is_old_payment = $isOldPayment;
+            $payment->days_diff = $daysDiff;
+            $payment->payment_delay_note = $paymentDelayNote;
+        }
+
         $due = $Sale->GrandTotal - $Sale->paid_amount;
 
         return response()->json(['payments' => $payments, 'due' => $due]);

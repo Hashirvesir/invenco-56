@@ -150,7 +150,21 @@
         </thead>
         <tbody>
             <tr style="background: #ecfdf5;">
-                <td style="padding: 12px 10px; font-size: 10pt; font-weight: 600; color: #1f2937;">{{$payment['sale_Ref']}}</td>
+                <td style="padding: 12px 10px; font-size: 10pt; font-weight: 600; color: #1f2937;">
+                    <div>{{$payment['sale_Ref']}}</div>
+                    @if(!empty($payment['sale_date']))
+                        <div style="font-size: 8pt; color: #4b5563; font-weight: normal; margin-top: 3px;">
+                            <strong>Sale Date:</strong> {{$payment['sale_date']}}
+                        </div>
+                    @endif
+                    @if(!empty($payment['is_old_payment']))
+                        <div style="margin-top: 4px;">
+                            <span style="display:inline-block; font-size: 7.5pt; color: #92400e; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 3px; padding: 2px 6px; font-weight: bold;">
+                                Paid {{$payment['days_diff']}} days after sale
+                            </span>
+                        </div>
+                    @endif
+                </td>
                 <td style="padding: 12px 10px; font-size: 10pt; color: #1f2937;">{{$payment['payment_method']}}</td>
                 <td style="padding: 12px 10px; text-align: right; font-size: 13pt; font-weight: bold; color: #10b981;">{{$symbol}} {{formatPrice((float)$payment['montant'], 2, $priceFormat)}}</td>
             </tr>

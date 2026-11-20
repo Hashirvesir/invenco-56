@@ -397,7 +397,14 @@
                   <td colspan="5">{{$t('NodataAvailable')}}</td>
                 </tr>
                 <tr v-for="payment in payments">
-                  <td>{{payment.date}}</td>
+                  <td>
+                    <div>{{payment.date}}</div>
+                    <div v-if="payment.is_old_payment" class="mt-1">
+                      <span class="badge badge-warning text-dark font-weight-bold" style="font-size: 10px;">
+                        Paid {{ payment.days_diff }}d after sale
+                      </span>
+                    </div>
+                  </td>
                   <td>{{payment.Ref}}</td>
                   <td>{{ formatPriceWithSymbol(currentUser.currency, payment.montant, 2) }}</td>
                   <td>{{payment.payment_method?payment.payment_method.name:'---'}}</td>

@@ -40,11 +40,19 @@ class PaymentSalesController extends BaseController
         $this->authorizeForUser($request->user('api'), 'Reports_payments_Sales', PaymentSale::class);
 
         // How many items do you want to display.
-        $perPage = $request->limit;
+        $perPage = $request->filled('limit') ? $request->limit : 10;
         $pageStart = \Request::get('page', 1);
         // Start displaying items from this number;
-        $offSet = ($pageStart * $perPage) - $perPage;
+        $offSet = ($pageStart * (int) $perPage) - (int) $perPage;
+        if ($offSet < 0) {
+            $offSet = 0;
+        }
         $order = $request->filled('SortField') ? $request->SortField : 'id';
+        if (in_array($order, ['sale_date', 'Ref_Sale'], true)) {
+            $order = 'sale_id';
+        } elseif (! in_array($order, ['id', 'date', 'Ref', 'montant', 'sale_id', 'created_at'], true)) {
+            $order = 'id';
+        }
         $dir = strtolower($request->SortType ?? 'desc');
         if (! in_array($dir, ['asc', 'desc'], true)) {
             $dir = 'desc';
@@ -126,21 +134,57 @@ class PaymentSalesController extends BaseController
 
         $totalRows = $Filtred->count();
         if ($perPage == '-1') {
-            $perPage = $totalRows;
+            $perPage = $totalRows > 0 ? $totalRows : 1;
         }
-        $Payments = $Filtred->offset($offSet)
-            ->limit($perPage)
-            ->orderBy($order, $dir)
-            ->get();
+        $perPage = max((int) $perPage, 1);
+        if ($totalRows === 0) {
+            $Payments = collect();
+        } else {
+            $Payments = $Filtred->offset($offSet)
+                ->limit($perPage)
+                ->orderBy($order, $dir)
+                ->get();
+        }
 
         foreach ($Payments as $Payment) {
+            $sale = $Payment->sale;
+            $saleDate = $sale ? $sale->date : null;
+            $paymentDate = $Payment->date;
+
+            $isOldPayment = false;
+            $daysDiff = 0;
+            $paymentDelayNote = null;
+
+            if ($saleDate && $paymentDate) {
+                try {
+                    $saleCarbon = \Carbon\Carbon::parse($saleDate)->startOfDay();
+                    $paymentCarbon = \Carbon\Carbon::parse($paymentDate)->startOfDay();
+
+                    if ($paymentCarbon->gt($saleCarbon)) {
+                        $isOldPayment = true;
+                        $daysDiff = (int) $saleCarbon->diffInDays($paymentCarbon);
+                        $paymentDelayNote = $daysDiff == 1 ? "Paid 1 day after sale" : "Paid {$daysDiff} days after sale";
+                    } elseif ($paymentCarbon->lt($saleCarbon)) {
+                        $daysDiff = (int) $paymentCarbon->diffInDays($saleCarbon);
+                        $paymentDelayNote = "Advance payment ({$daysDiff} days prior)";
+                    } else {
+                        $paymentDelayNote = "Same day payment";
+                    }
+                } catch (\Exception $e) {
+                    $paymentDelayNote = null;
+                }
+            }
 
             $item['date'] = $Payment->date;
             $item['Ref'] = $Payment->Ref;
-            $item['Ref_Sale'] = $Payment['sale']->Ref;
-            $item['sale_id'] = $Payment['sale']->id;
-            $item['client_name'] = $Payment['sale']['client']->name;
-            $item['payment_method'] = $Payment['payment_method']->name;
+            $item['Ref_Sale'] = $sale ? $sale->Ref : '---';
+            $item['sale_id'] = $sale ? $sale->id : null;
+            $item['sale_date'] = $saleDate;
+            $item['is_old_payment'] = $isOldPayment;
+            $item['days_diff'] = $daysDiff;
+            $item['payment_delay_note'] = $paymentDelayNote;
+            $item['client_name'] = ($sale && $sale->client) ? $sale->client->name : '---';
+            $item['payment_method'] = $Payment['payment_method'] ? $Payment['payment_method']->name : '---';
             $item['montant'] = $Payment->montant;
             $item['account_name'] = $Payment['account'] ? $Payment['account']->account_name : '---';
             $item['user_name'] = $Payment['user'] ? $Payment['user']->username : '---';
@@ -422,15 +466,47 @@ class PaymentSalesController extends BaseController
     {
         $payment = PaymentSale::with('sale', 'sale.client')->findOrFail($id);
 
-        $payment_data['sale_Ref'] = $payment['sale']->Ref;
-        $payment_data['client_name'] = $payment['sale']['client']->name;
-        $payment_data['client_phone'] = $payment['sale']['client']->phone;
-        $payment_data['client_adr'] = $payment['sale']['client']->adresse;
-        $payment_data['client_email'] = $payment['sale']['client']->email;
+        $sale = $payment->sale;
+        $saleDate = $sale ? $sale->date : null;
+        $paymentDate = $payment->date;
+
+        $isOldPayment = false;
+        $daysDiff = 0;
+        $paymentDelayNote = null;
+
+        if ($saleDate && $paymentDate) {
+            try {
+                $saleCarbon = \Carbon\Carbon::parse($saleDate)->startOfDay();
+                $paymentCarbon = \Carbon\Carbon::parse($paymentDate)->startOfDay();
+
+                if ($paymentCarbon->gt($saleCarbon)) {
+                    $isOldPayment = true;
+                    $daysDiff = (int) $saleCarbon->diffInDays($paymentCarbon);
+                    $paymentDelayNote = $daysDiff == 1 ? "Paid 1 day after sale" : "Paid {$daysDiff} days after sale";
+                } elseif ($paymentCarbon->lt($saleCarbon)) {
+                    $daysDiff = (int) $paymentCarbon->diffInDays($saleCarbon);
+                    $paymentDelayNote = "Advance payment ({$daysDiff} days prior)";
+                } else {
+                    $paymentDelayNote = "Same day payment";
+                }
+            } catch (\Exception $e) {
+                $paymentDelayNote = null;
+            }
+        }
+
+        $payment_data['sale_Ref'] = $sale ? $sale->Ref : '---';
+        $payment_data['sale_date'] = $saleDate;
+        $payment_data['is_old_payment'] = $isOldPayment;
+        $payment_data['days_diff'] = $daysDiff;
+        $payment_data['payment_delay_note'] = $paymentDelayNote;
+        $payment_data['client_name'] = ($sale && $sale->client) ? $sale->client->name : '---';
+        $payment_data['client_phone'] = ($sale && $sale->client) ? $sale->client->phone : '---';
+        $payment_data['client_adr'] = ($sale && $sale->client) ? $sale->client->adresse : '---';
+        $payment_data['client_email'] = ($sale && $sale->client) ? $sale->client->email : '---';
         $payment_data['montant'] = $payment->montant;
         $payment_data['Ref'] = $payment->Ref;
         $payment_data['date'] = $payment->date;
-        $payment_data['payment_method'] = $payment['payment_method']->name;
+        $payment_data['payment_method'] = $payment->payment_method ? $payment->payment_method->name : '---';
 
         $helpers = new helpers;
         $settings = Setting::where('deleted_at', '=', null)->first();

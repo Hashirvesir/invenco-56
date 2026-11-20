@@ -108,13 +108,30 @@
           </div>
 
           <template slot="table-row" slot-scope="props">
-            <span v-if="props.column.field === 'montant'">
+            <span v-if="props.column.field === 'date'">
+              <span class="font-weight-bold">{{ props.formattedRow['date'] }}</span>
+              <div v-if="props.row.is_old_payment" class="mt-1">
+                <span class="badge badge-warning text-dark font-weight-bold" style="font-size: 11px; white-space: nowrap;">
+                  <i class="i-Clock mr-1"></i> Late (+{{ props.row.days_diff }}d)
+                </span>
+              </div>
+            </span>
+            <span v-else-if="props.column.field === 'montant'">
               {{ formatPriceDisplay(props.row.montant, 2) }}
             </span>
             <span v-else-if="props.column.field === 'Ref_Sale' && props.row.sale_id">
-              <router-link :to="{ name: 'detail_sale', params: { id: props.row.sale_id } }" class="text-primary">
+              <router-link :to="{ name: 'detail_sale', params: { id: props.row.sale_id } }" class="text-primary font-weight-bold">
                 {{ props.formattedRow[props.column.field] }}
               </router-link>
+            </span>
+            <span v-else-if="props.column.field === 'sale_date'">
+              <div>{{ props.row.sale_date || '---' }}</div>
+              <div v-if="props.row.is_old_payment" class="small text-danger font-weight-bold mt-1">
+                Old Sale ({{ props.row.days_diff }}d prior)
+              </div>
+              <div v-else-if="props.row.sale_date && !props.row.is_old_payment" class="small text-success mt-1">
+                Same day
+              </div>
             </span>
             <span v-else-if="props.column.field === 'account_name'">
               <span v-if="props.row.account_name && props.row.account_name !== '---'" class="badge badge-outline-success font-weight-bold">
@@ -265,29 +282,32 @@ export default {
   computed: {
     columns() {
       return [
-        { label: this.$t("date"),          field: "date",           tdClass: "text-left", thClass: "text-left" },
-        { label: this.$t("Reference"),     field: "Ref",            tdClass: "text-left", thClass: "text-left" },
-        { label: this.$t("Sale"),          field: "Ref_Sale",       tdClass: "text-left", thClass: "text-left" },
-        { label: this.$t("Customer"),      field: "client_name",    tdClass: "text-left", thClass: "text-left" },
-        { label: this.$t("ModePaiement"),  field: "payment_method", tdClass: "text-left", thClass: "text-left" },
-        { label: this.$t("Account"),       field: "account_name",   tdClass: "text-left", thClass: "text-left", sortable:false },
-        { label: this.$t("Amount"),        field: "montant",        // Let headerField return a formatted string; avoid vue-good-table's decimal re-formatting.
+        { label: this.$t("date") || "Payment Date", field: "date",           tdClass: "text-left", thClass: "text-left" },
+        { label: this.$t("Reference") || "Reference", field: "Ref",            tdClass: "text-left", thClass: "text-left" },
+        { label: this.$t("Sale") || "Sale",          field: "Ref_Sale",       tdClass: "text-left", thClass: "text-left" },
+        { label: this.$t("SaleDate") || "Sale Date", field: "sale_date",      tdClass: "text-left", thClass: "text-left" },
+        { label: this.$t("Customer") || "Customer",  field: "client_name",    tdClass: "text-left", thClass: "text-left" },
+        { label: this.$t("ModePaiement") || "Mode Paiement", field: "payment_method", tdClass: "text-left", thClass: "text-left" },
+        { label: this.$t("Account") || "Account",   field: "account_name",   tdClass: "text-left", thClass: "text-left", sortable:false },
+        { label: this.$t("Amount") || "Amount",    field: "montant",        // Let headerField return a formatted string; avoid vue-good-table's decimal re-formatting.
           headerField: this.sumCount, tdClass: "text-left", thClass: "text-left" },
-        { label: this.$t("AddedBy"), field: "user_name", tdClass: "text-left", thClass: "text-left", sortable:false },
+        { label: this.$t("AddedBy") || "Added By", field: "user_name", tdClass: "text-left", thClass: "text-left", sortable:false },
       ];
     },
 
     // for excel lib (simple mapping)
     excelColumns(){
       return [
-        { label: this.$t("date"), field: "date" },
-        { label: this.$t("Reference"), field: "Ref" },
-        { label: this.$t("Sale"), field: "Ref_Sale" },
-        { label: this.$t("Customer"), field: "client_name" },
-        { label: this.$t("ModePaiement"), field: "payment_method" },
-        { label: this.$t("Account"), field: "account_name" },
-        { label: this.$t("Amount"), field: "montant" },
-        { label: this.$t("AddedBy"), field: "user_name" },
+        { label: this.$t("date") || "Payment Date", field: "date" },
+        { label: this.$t("Reference") || "Reference", field: "Ref" },
+        { label: this.$t("Sale") || "Sale", field: "Ref_Sale" },
+        { label: this.$t("SaleDate") || "Sale Date", field: "sale_date" },
+        { label: "Payment Status / Delay", field: "payment_delay_note" },
+        { label: this.$t("Customer") || "Customer", field: "client_name" },
+        { label: this.$t("ModePaiement") || "Mode Paiement", field: "payment_method" },
+        { label: this.$t("Account") || "Account", field: "account_name" },
+        { label: this.$t("Amount") || "Amount", field: "montant" },
+        { label: this.$t("AddedBy") || "Added By", field: "user_name" },
       ];
     },
 
@@ -473,10 +493,18 @@ export default {
           
           if (col.field === 'date') {
             cellValue = payment.date ? this.fmt(payment.date) : '';
+            if (payment.is_old_payment) {
+              cellValue += ` <span style="color:#d97706; font-weight:bold;">(+${payment.days_diff}d)</span>`;
+            }
           } else if (col.field === 'Ref') {
             cellValue = payment.Ref || '';
           } else if (col.field === 'Ref_Sale') {
             cellValue = payment.Ref_Sale || '';
+          } else if (col.field === 'sale_date') {
+            cellValue = payment.sale_date || '---';
+            if (payment.is_old_payment) {
+              cellValue += ` <span style="color:#dc2626; font-size:9px;">(Old Sale: ${payment.days_diff}d prior)</span>`;
+            }
           } else if (col.field === 'client_name') {
             cellValue = payment.client_name || '';
           } else if (col.field === 'payment_method') {
@@ -682,20 +710,24 @@ export default {
 
         // Table
         const head = [[
-          this.$t('date'),
-          this.$t('Reference'),
-          this.$t('Sale'),
-          this.$t('Customer'),
-          this.$t('ModePaiement'),
-          this.$t('Account'),
-          this.$t('Amount'),
-          this.$t('AddedBy'),
+          this.$t('date') || 'Payment Date',
+          this.$t('Reference') || 'Reference',
+          this.$t('Sale') || 'Sale',
+          this.$t('SaleDate') || 'Sale Date',
+          'Status / Delay',
+          this.$t('Customer') || 'Customer',
+          this.$t('ModePaiement') || 'Payment Method',
+          this.$t('Account') || 'Account',
+          this.$t('Amount') || 'Amount',
+          this.$t('AddedBy') || 'Added By',
         ]];
 
         const body = items.map(r => ([
           r.date || '',
           r.Ref || '',
           r.Ref_Sale || '',
+          r.sale_date || '---',
+          r.payment_delay_note || (r.is_old_payment ? `Paid ${r.days_diff}d after sale` : 'Same day'),
           r.client_name || '',
           r.payment_method || '',
           r.account_name || '',
@@ -713,8 +745,8 @@ export default {
           styles: {
             font: 'Vazirmatn',
             fontStyle: 'normal',
-            fontSize: 9,
-            cellPadding: 6,
+            fontSize: 8,
+            cellPadding: 5,
             overflow: 'linebreak',
             halign: rtl ? 'right' : 'left',
           },
@@ -726,10 +758,10 @@ export default {
             halign: rtl ? 'right' : 'left',
           },
           columnStyles: {
-            6: { halign:'right' }, // Amount column
+            8: { halign:'right' }, // Amount column
           },
           foot: [[
-            { content: this.$t('Totals'), colSpan: 7, styles:{ halign:'right', fontStyle:'bold' } },
+            { content: this.$t('Totals') || 'Totals', colSpan: 8, styles:{ halign:'right', fontStyle:'bold' } },
             { content: total.toFixed(2),  styles:{ halign:'right', fontStyle:'bold' } }
           ]],
           didDrawPage: (d) => {
