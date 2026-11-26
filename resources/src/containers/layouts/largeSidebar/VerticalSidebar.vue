@@ -372,6 +372,12 @@
                   <span>{{ $t('AddPurchase') }}</span>
                 </router-link>
               </li>
+              <li class="submenu-item" v-if="currentUserPermissions && currentUserPermissions.includes('Purchases_add')">
+                <router-link to="/app/purchases/store?scan=1" class="submenu-link">
+                  <lucide-icon class="submenu-icon" name="scan" />
+                  <span>AI Bill Scanner</span>
+                </router-link>
+              </li>
               <li class="submenu-item" v-if="currentUserPermissions && currentUserPermissions.includes('Purchases_view')">
                 <router-link to="/app/purchases/list" class="submenu-link">
                   <lucide-icon class="submenu-icon" name="files" />

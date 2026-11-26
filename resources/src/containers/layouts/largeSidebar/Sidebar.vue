@@ -1011,6 +1011,15 @@
           </li>
           <li
             class="nav-item"
+            v-if="currentUserPermissions && currentUserPermissions.includes('Purchases_add')"
+          >
+            <router-link tag="a" class to="/app/purchases/store?scan=1">
+              <lucide-icon class="nav-icon" name="scan" />
+              <span class="item-name">AI Bill Scanner</span>
+            </router-link>
+          </li>
+          <li
+            class="nav-item"
             v-if="currentUserPermissions && currentUserPermissions.includes('Purchases_view')"
           >
             <router-link tag="a" class to="/app/purchases/list">

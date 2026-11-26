@@ -21,7 +21,7 @@
           </div>
         </div>
         <div>
-          <b-button variant="light" class="btn-pill font-weight-bold shadow-sm px-3 py-2 text-primary" @click="openAiScanModal">
+          <b-button type="button" variant="light" class="btn-pill font-weight-bold shadow-sm px-3 py-2 text-primary" @click.prevent="openAiScanModal">
             <i class="i-Scan-Barcode mr-1"></i> Scan Bill with AI
           </b-button>
         </div>
@@ -95,7 +95,7 @@
                             </div>
                             <div class="font-weight-bold text-dark">{{ aiScan.file ? aiScan.file.name : '' }}</div>
                             <small class="text-muted d-block mb-2">{{ formatFileSize(aiScan.file ? aiScan.file.size : 0) }}</small>
-                            <b-button size="sm" variant="outline-danger" class="btn-pill" @click.stop="clearAiSelectedFile">
+                            <b-button type="button" size="sm" variant="outline-danger" class="btn-pill" @click.stop="clearAiSelectedFile">
                               Change File
                             </b-button>
                           </div>
@@ -162,6 +162,7 @@
                         <!-- Start Scan Button -->
                         <div class="mt-4">
                           <b-button
+                            type="button"
                             variant="primary"
                             block
                             size="lg"
@@ -189,7 +190,7 @@
                       <b-col md="4" sm="12" class="border-right mb-3">
                         <div class="d-flex align-items-center justify-content-between mb-2">
                           <h6 class="font-weight-bold mb-0 text-primary">Original Bill Preview</h6>
-                          <b-button size="sm" variant="outline-primary" @click="resetAiScanner">
+                          <b-button type="button" size="sm" variant="outline-primary" @click="resetAiScanner">
                             <i class="i-Upload"></i> Scan New
                           </b-button>
                         </div>
@@ -220,7 +221,7 @@
                               <span v-else class="badge badge-warning text-dark ml-2">New Supplier</span>
                             </div>
                             <div v-if="!aiScan.result.supplier.matched" class="mt-1">
-                              <b-button size="sm" variant="outline-primary" class="py-0 px-2" style="font-size: 11px;" @click="quickCreateSupplierFromAi">
+                              <b-button type="button" size="sm" variant="outline-primary" class="py-0 px-2" style="font-size: 11px;" @click="quickCreateSupplierFromAi">
                                 + Quick Add Supplier
                               </b-button>
                             </div>
@@ -248,7 +249,7 @@
                             Extracted Products ({{ aiScan.result.items.length }} items)
                           </h6>
                           <div v-if="hasUnmatchedAiItems">
-                            <b-button size="sm" variant="warning" class="text-dark font-weight-bold py-1 px-2" style="font-size: 12px;" @click="quickCreateAllUnmatchedProducts">
+                            <b-button type="button" size="sm" variant="warning" class="text-dark font-weight-bold py-1 px-2" style="font-size: 12px;" @click="quickCreateAllUnmatchedProducts">
                               <i class="i-Add"></i> Create All {{ unmatchedAiItemsCount }} New Products
                             </b-button>
                           </div>
@@ -294,7 +295,7 @@
                                   </span>
                                   <div v-else>
                                     <span class="badge badge-warning text-dark mb-1">New Product</span>
-                                    <b-button size="sm" variant="outline-primary" class="py-0 px-1 d-block" style="font-size: 11px;" @click="quickCreateProductFromAi(item, idx)">
+                                    <b-button type="button" size="sm" variant="outline-primary" class="py-0 px-1 d-block" style="font-size: 11px;" @click="quickCreateProductFromAi(item, idx)">
                                       + Create
                                     </b-button>
                                   </div>
@@ -315,8 +316,8 @@
                             <span class="text-muted">Grand Total: <strong class="text-success">{{ currentUser.currency }} {{ (aiScan.result.financials.grand_total || 0).toFixed(2) }}</strong></span>
                           </div>
                           <div>
-                            <b-button variant="secondary" class="mr-2 btn-pill" @click="$bvModal.hide('ai_bill_scan_modal')">Cancel</b-button>
-                            <b-button variant="success" class="btn-pill font-weight-bold px-4 shadow" @click="applyAiResultsToPurchase">
+                            <b-button type="button" variant="secondary" class="mr-2 btn-pill" @click="$bvModal.hide('ai_bill_scan_modal')">Cancel</b-button>
+                            <b-button type="button" variant="success" class="btn-pill font-weight-bold px-4 shadow" @click="applyAiResultsToPurchase">
                               <i class="i-Check mr-1"></i> Apply to Purchase Form
                             </b-button>
                           </div>
@@ -1959,8 +1960,10 @@ export default {
     // AI Bill Scanner Methods
     // ==========================================
     openAiScanModal() {
-      // Check config status
-      axios.get('purchases/ai-scan-config').then(({ data }) => {
+      this.$bvModal.show('ai_bill_scan_modal');
+
+      // Check config status safely without triggering 404 router redirects
+      axios.get('purchase-ai/config', { meta: { skipAuthRedirect: true } }).then(({ data }) => {
         this.aiScan.configured = !!data.configured;
         this.aiScan.provider = data.provider || 'gemini';
         this.aiScan.showKeyInput = !data.configured;
@@ -1968,8 +1971,6 @@ export default {
         this.aiScan.configured = false;
         this.aiScan.showKeyInput = true;
       });
-
-      this.$bvModal.show('ai_bill_scan_modal');
     },
 
     onAiFileSelected(e) {
@@ -2019,8 +2020,9 @@ export default {
       this.aiScan.loading = true;
       NProgress.start();
 
-      axios.post('purchases/ai-scan-bill', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+      axios.post('purchase-ai/scan', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        meta: { skipAuthRedirect: true }
       })
       .then(({ data }) => {
         this.aiScan.loading = false;
@@ -2077,12 +2079,12 @@ export default {
 
     quickCreateProductFromAi(item, index) {
       NProgress.start();
-      axios.post('purchases/ai-quick-create-product', {
+      axios.post('purchase-ai/quick-create-product', {
         name: item.name,
         cost: item.cost,
         code: item.code || '',
         warehouse_id: this.purchase.warehouse_id || null
-      })
+      }, { meta: { skipAuthRedirect: true } })
       .then(({ data }) => {
         NProgress.done();
         if (data.success && data.product) {
@@ -2110,12 +2112,12 @@ export default {
       let created = 0;
       for (const item of unmatched) {
         try {
-          const { data } = await axios.post('purchases/ai-quick-create-product', {
+          const { data } = await axios.post('purchase-ai/quick-create-product', {
             name: item.name,
             cost: item.cost,
             code: item.code || '',
             warehouse_id: this.purchase.warehouse_id || null
-          });
+          }, { meta: { skipAuthRedirect: true } });
           if (data.success && data.product) {
             item.product_id = data.product.id;
             item.code = data.product.code;
@@ -2138,12 +2140,12 @@ export default {
       const s = this.aiScan.result.supplier;
 
       NProgress.start();
-      axios.post('purchases/ai-quick-create-supplier', {
+      axios.post('purchase-ai/quick-create-supplier', {
         name: s.name,
         phone: s.phone,
         tax_number: s.tax_number,
         adresse: s.address
-      })
+      }, { meta: { skipAuthRedirect: true } })
       .then(({ data }) => {
         NProgress.done();
         if (data.success && data.supplier) {
@@ -2292,6 +2294,13 @@ export default {
   //-----------------------------  Created function-------------------
   created() {
     this.GetElements();
+  },
+  mounted() {
+    if (this.$route && (this.$route.query.scan || this.$route.query.ai_scan)) {
+      setTimeout(() => {
+        this.openAiScanModal();
+      }, 400);
+    }
   }
 };
 </script>

@@ -245,6 +245,15 @@ class PurchasesController extends BaseController
                 ];
 
                 if ($order->statut == 'received') {
+                    $base_cost = (float) ($value['Unit_cost'] ?? 0);
+                    if ($unit && (float) $unit->operator_value > 0) {
+                        if ($unit->operator == '/') {
+                            $base_cost = $base_cost * (float) $unit->operator_value;
+                        } elseif ($unit->operator == '*') {
+                            $base_cost = $base_cost / (float) $unit->operator_value;
+                        }
+                    }
+
                     if ($value['product_variant_id'] !== null) {
                         $product_warehouse = product_warehouse::where('deleted_at', '=', null)
                             ->where('warehouse_id', $order->warehouse_id)
@@ -261,6 +270,10 @@ class PurchasesController extends BaseController
                             $product_warehouse->save();
                         }
 
+                        if ($base_cost > 0) {
+                            ProductVariant::where('id', $value['product_variant_id'])->update(['cost' => $base_cost]);
+                        }
+
                     } else {
                         $product_warehouse = product_warehouse::where('deleted_at', '=', null)
                             ->where('warehouse_id', $order->warehouse_id)
@@ -274,6 +287,10 @@ class PurchasesController extends BaseController
                                 $product_warehouse->qte += $value['quantity'] * $unit->operator_value;
                             }
                             $product_warehouse->save();
+                        }
+
+                        if ($base_cost > 0) {
+                            Product::where('id', $value['product_id'])->update(['cost' => $base_cost]);
                         }
                     }
                 }
@@ -430,6 +447,14 @@ class PurchasesController extends BaseController
                         $unit_prod = Unit::where('id', $prod_detail['purchase_unit_id'])->first();
 
                         if ($request['statut'] == 'received') {
+                            $base_cost = (float) ($prod_detail['Unit_cost'] ?? 0);
+                            if ($unit_prod && (float) $unit_prod->operator_value > 0) {
+                                if ($unit_prod->operator == '/') {
+                                    $base_cost = $base_cost * (float) $unit_prod->operator_value;
+                                } elseif ($unit_prod->operator == '*') {
+                                    $base_cost = $base_cost / (float) $unit_prod->operator_value;
+                                }
+                            }
 
                             if ($prod_detail['product_variant_id'] !== null) {
                                 $product_warehouse = product_warehouse::where('deleted_at', '=', null)
@@ -448,6 +473,10 @@ class PurchasesController extends BaseController
                                     $product_warehouse->save();
                                 }
 
+                                if ($base_cost > 0) {
+                                    ProductVariant::where('id', $prod_detail['product_variant_id'])->update(['cost' => $base_cost]);
+                                }
+
                             } else {
                                 $product_warehouse = product_warehouse::where('deleted_at', '=', null)
                                     ->where('warehouse_id', $request->warehouse_id)
@@ -462,6 +491,10 @@ class PurchasesController extends BaseController
                                     }
 
                                     $product_warehouse->save();
+                                }
+
+                                if ($base_cost > 0) {
+                                    Product::where('id', $prod_detail['product_id'])->update(['cost' => $base_cost]);
                                 }
                             }
 

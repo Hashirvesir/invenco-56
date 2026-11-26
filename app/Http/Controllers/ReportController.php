@@ -10249,6 +10249,49 @@ public function draftInvoices(Request $request)
         }
         $dir     = $request->filled('SortType')  ? $request->SortType  : 'desc';
 
+        // Date condition for purchase pricing (purchases up to the report's end date)
+        $purchDateCondition = $to ? "AND p.date <= " . DB::getPdo()->quote($to) : "";
+
+        // Average purchase cost subqueries (warehouse-specific and across all warehouses)
+        $whPurchSub = "(
+            SELECT
+                pd.product_id,
+                COALESCE(pd.product_variant_id, 0) as variant_id,
+                p.warehouse_id,
+                SUM(pd.quantity * pd.cost) / NULLIF(SUM(
+                    CASE 
+                        WHEN u.operator = '/' THEN pd.quantity / COALESCE(NULLIF(u.operator_value, 0), 1)
+                        WHEN u.operator = '*' THEN pd.quantity * COALESCE(u.operator_value, 1)
+                        ELSE pd.quantity 
+                    END
+                ), 0) as avg_cost
+            FROM purchase_details pd
+            JOIN purchases p ON pd.purchase_id = p.id
+            LEFT JOIN units u ON pd.purchase_unit_id = u.id
+            WHERE p.deleted_at IS NULL AND p.statut = 'received' {$purchDateCondition}
+            GROUP BY pd.product_id, COALESCE(pd.product_variant_id, 0), p.warehouse_id
+        ) as wh_purch";
+
+        $allPurchSub = "(
+            SELECT
+                pd.product_id,
+                COALESCE(pd.product_variant_id, 0) as variant_id,
+                SUM(pd.quantity * pd.cost) / NULLIF(SUM(
+                    CASE 
+                        WHEN u.operator = '/' THEN pd.quantity / COALESCE(NULLIF(u.operator_value, 0), 1)
+                        WHEN u.operator = '*' THEN pd.quantity * COALESCE(u.operator_value, 1)
+                        ELSE pd.quantity 
+                    END
+                ), 0) as avg_cost
+            FROM purchase_details pd
+            JOIN purchases p ON pd.purchase_id = p.id
+            LEFT JOIN units u ON pd.purchase_unit_id = u.id
+            WHERE p.deleted_at IS NULL AND p.statut = 'received' {$purchDateCondition}
+            GROUP BY pd.product_id, COALESCE(pd.product_variant_id, 0)
+        ) as all_purch";
+
+        $effectiveCost = "COALESCE(wh_purch.avg_cost, all_purch.avg_cost, product_variants.cost, products.cost, 0)";
+
         // Build base query grouped by product + warehouse
         $query = SaleDetail::query()
             ->join('sales', 'sale_details.sale_id', '=', 'sales.id')
@@ -10256,6 +10299,15 @@ public function draftInvoices(Request $request)
             ->join('warehouses', 'sales.warehouse_id', '=', 'warehouses.id')
             ->leftJoin('product_variants', function ($join) {
                 $join->on('sale_details.product_variant_id', '=', 'product_variants.id');
+            })
+            ->leftJoin(DB::raw($whPurchSub), function ($j) {
+                $j->on('wh_purch.product_id', '=', 'sale_details.product_id')
+                  ->on('wh_purch.variant_id', '=', DB::raw('COALESCE(sale_details.product_variant_id, 0)'))
+                  ->on('wh_purch.warehouse_id', '=', 'sales.warehouse_id');
+            })
+            ->leftJoin(DB::raw($allPurchSub), function ($j) {
+                $j->on('all_purch.product_id', '=', 'sale_details.product_id')
+                  ->on('all_purch.variant_id', '=', DB::raw('COALESCE(sale_details.product_variant_id, 0)'));
             })
             ->whereNull('sales.deleted_at')
             ->whereNull('products.deleted_at')
@@ -10284,26 +10336,26 @@ public function draftInvoices(Request $request)
                       ->orWhere('warehouses.name', 'LIKE', "%{$s}%");
                 }
             })
-            ->selectRaw('
+            ->selectRaw("
                 sale_details.product_id,
                 sales.warehouse_id,
                 CASE
                     WHEN sale_details.product_variant_id IS NOT NULL
-                    THEN CONCAT("[", product_variants.name, "] ", products.name)
+                    THEN CONCAT('[', product_variants.name, '] ', products.name)
                     ELSE products.name
                 END AS product_name,
                 warehouses.name AS warehouse_name,
                 SUM(sale_details.quantity) AS quantity_sold,
-                products.cost AS cost_per_unit,
-                SUM(sale_details.quantity) * products.cost AS total_cost_amount,
+                ROUND({$effectiveCost}, 2) AS cost_per_unit,
+                SUM(sale_details.quantity * {$effectiveCost}) AS total_cost_amount,
                 SUM(sale_details.total) AS total_sale_amount,
-                SUM(sale_details.total) - (SUM(sale_details.quantity) * products.cost) AS gross_profit,
+                SUM(sale_details.total) - SUM(sale_details.quantity * {$effectiveCost}) AS gross_profit,
                 CASE
                     WHEN SUM(sale_details.total) > 0
-                    THEN ROUND(((SUM(sale_details.total) - (SUM(sale_details.quantity) * products.cost)) / SUM(sale_details.total)) * 100, 2)
+                    THEN ROUND(((SUM(sale_details.total) - SUM(sale_details.quantity * {$effectiveCost})) / SUM(sale_details.total)) * 100, 2)
                     ELSE 0
                 END AS margin_pct
-            ')
+            ")
             ->groupBy(
                 'sale_details.product_id',
                 'sales.warehouse_id',
@@ -10311,7 +10363,10 @@ public function draftInvoices(Request $request)
                 'products.name',
                 'product_variants.name',
                 'warehouses.name',
-                'products.cost'
+                'products.cost',
+                'product_variants.cost',
+                'wh_purch.avg_cost',
+                'all_purch.avg_cost'
             );
 
         $totalRows = $query->get()->count();
@@ -10330,6 +10385,18 @@ public function draftInvoices(Request $request)
         $summaryQuery = SaleDetail::query()
             ->join('sales', 'sale_details.sale_id', '=', 'sales.id')
             ->join('products', 'sale_details.product_id', '=', 'products.id')
+            ->leftJoin('product_variants', function ($join) {
+                $join->on('sale_details.product_variant_id', '=', 'product_variants.id');
+            })
+            ->leftJoin(DB::raw($whPurchSub), function ($j) {
+                $j->on('wh_purch.product_id', '=', 'sale_details.product_id')
+                  ->on('wh_purch.variant_id', '=', DB::raw('COALESCE(sale_details.product_variant_id, 0)'))
+                  ->on('wh_purch.warehouse_id', '=', 'sales.warehouse_id');
+            })
+            ->leftJoin(DB::raw($allPurchSub), function ($j) {
+                $j->on('all_purch.product_id', '=', 'sale_details.product_id')
+                  ->on('all_purch.variant_id', '=', DB::raw('COALESCE(sale_details.product_variant_id, 0)'));
+            })
             ->whereNull('sales.deleted_at')
             ->whereNull('products.deleted_at')
             ->when($from && $to, fn($q) => $q->whereBetween('sale_details.date', [$from, $to]))
@@ -10356,10 +10423,10 @@ public function draftInvoices(Request $request)
                     $q->where('products.name', 'LIKE', "%{$s}%");
                 }
             })
-            ->selectRaw('
+            ->selectRaw("
                 SUM(sale_details.total) AS total_sales,
-                SUM(sale_details.quantity * products.cost) AS total_cost
-            ')
+                SUM(sale_details.quantity * {$effectiveCost}) AS total_cost
+            ")
             ->first();
 
         $totalSales  = $summaryQuery ? (float) $summaryQuery->total_sales  : 0;
