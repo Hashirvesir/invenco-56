@@ -54,6 +54,31 @@
                 >
                   <!-- Step 1: Upload / Scanning Screen (when no results yet) -->
                   <div v-if="!aiScan.result" class="p-2">
+                    <!-- Quota Info Banner -->
+                    <div class="d-flex align-items-center justify-content-between p-2 mb-3 rounded" style="background: #f8fafc; border: 1px solid #e2e8f0;">
+                      <div class="d-flex align-items-center">
+                        <i class="i-Information text-primary mr-2" style="font-size: 1.15rem;"></i>
+                        <span class="small font-weight-bold text-dark">
+                          Monthly AI Bill Limit: <strong>120 bills / month</strong>
+                        </span>
+                      </div>
+                      <div>
+                        <span
+                          class="badge badge-pill font-weight-bold px-3 py-1"
+                          :class="aiScan.quota && aiScan.quota.limit_reached ? 'badge-danger' : (aiScan.quota && aiScan.quota.remaining <= 10 ? 'badge-warning' : 'badge-primary')"
+                          style="font-size: 0.85rem;"
+                        >
+                          Used: {{ aiScan.quota ? aiScan.quota.used : 0 }} / {{ aiScan.quota ? aiScan.quota.monthly_limit : 120 }} ({{ aiScan.quota ? aiScan.quota.remaining : 120 }} remaining)
+                        </span>
+                      </div>
+                    </div>
+
+                    <!-- Limit Reached Warning -->
+                    <b-alert v-if="aiScan.quota && aiScan.quota.limit_reached" variant="danger" show class="mb-3">
+                      <strong><i class="i-Close-Window mr-1"></i> Monthly Limit Reached:</strong>
+                      Is month ki 120 bill scans ki limit poori ho chuki hai. Aap is month mazeed bills scan nahi kar saktay. Aglay month quota automatically reset ho jaye ga.
+                    </b-alert>
+
                     <b-row>
                       <!-- Left: Upload Box -->
                       <b-col md="7" sm="12" class="pr-md-4 border-right">
@@ -145,7 +170,7 @@
                             size="lg"
                             class="font-weight-bold shadow py-3"
                             style="font-size: 16px; border-radius: 10px;"
-                            :disabled="!aiScan.file || aiScan.loading"
+                            :disabled="!aiScan.file || aiScan.loading || (aiScan.quota && aiScan.quota.limit_reached)"
                             @click="triggerAiScan"
                           >
                             <span v-if="aiScan.loading">
@@ -1170,7 +1195,13 @@ export default {
         file: null,
         filePreview: null,
         fileType: 'image',
-        result: null
+        result: null,
+        quota: {
+          monthly_limit: 120,
+          used: 0,
+          remaining: 120,
+          limit_reached: false
+        }
       },
       warehouses: [],
       suppliers: [],
@@ -1938,7 +1969,18 @@ export default {
     // AI Bill Scanner Methods
     // ==========================================
     openAiScanModal() {
+      this.fetchAiQuota();
       this.$bvModal.show('ai_bill_scan_modal');
+    },
+
+    fetchAiQuota() {
+      axios.get('purchase-ai/config', { meta: { skipAuthRedirect: true } })
+        .then(({ data }) => {
+          if (data && data.quota) {
+            this.aiScan.quota = data.quota;
+          }
+        })
+        .catch(() => {});
     },
 
     onAiFileSelected(e) {
@@ -1994,6 +2036,9 @@ export default {
           this.aiScan.result = data;
           this.aiScan.configured = true;
           this.aiScan.showKeyInput = false;
+          if (data.quota) {
+            this.aiScan.quota = data.quota;
+          }
 
           // If supplier was matched, also select it
           if (data.supplier && data.supplier.id) {

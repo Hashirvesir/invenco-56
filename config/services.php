@@ -49,5 +49,8 @@ return [
         'key' => env('OPENAI_API_KEY'),
     ],
 
+    'ai' => [
+        'monthly_limit' => (int) env('AI_MONTHLY_REQUEST_LIMIT', 120),
+    ],
 
 ];

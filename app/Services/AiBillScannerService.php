@@ -56,6 +56,52 @@ class AiBillScannerService
     }
 
     /**
+     * Get monthly scan usage statistics.
+     */
+    public function getMonthlyUsage(): array
+    {
+        $monthlyLimit = (int) env('AI_MONTHLY_REQUEST_LIMIT', config('services.ai.monthly_limit', 120));
+        if ($monthlyLimit <= 0) {
+            $monthlyLimit = 120;
+        }
+
+        $monthStart = strtotime(date('Y-m-01 00:00:00'));
+        $monthEnd = strtotime(date('Y-m-t 23:59:59'));
+
+        $cacheKey = 'ai_scans_' . date('Y_m');
+        $cacheUsage = (int) Cache::get($cacheKey, 0);
+
+        // Count actual bills saved in public/images/purchases_bills for this month
+        $folderUsage = 0;
+        $billsDir = public_path('images/purchases_bills');
+        if (File::isDirectory($billsDir)) {
+            $files = File::files($billsDir);
+            foreach ($files as $file) {
+                $filename = $file->getFilename();
+                if (preg_match('/^bill_(\d+)_/i', $filename, $m)) {
+                    $timestamp = (int) $m[1];
+                    if ($timestamp >= $monthStart && $timestamp <= $monthEnd) {
+                        $folderUsage++;
+                    }
+                }
+            }
+        }
+
+        $currentUsage = max($cacheUsage, $folderUsage);
+
+        if ($currentUsage > $cacheUsage) {
+            Cache::forever($cacheKey, $currentUsage);
+        }
+
+        return [
+            'monthly_limit' => $monthlyLimit,
+            'used' => $currentUsage,
+            'remaining' => max(0, $monthlyLimit - $currentUsage),
+            'limit_reached' => $currentUsage >= $monthlyLimit,
+        ];
+    }
+
+    /**
      * Scan an uploaded purchase bill image or PDF file.
      *
      * @return array
@@ -85,14 +131,10 @@ class AiBillScannerService
 
         $base64Data = base64_encode(file_get_contents($savedFilePath));
 
-        // Check monthly request limit if configured
-        $monthlyLimit = (int) env('AI_MONTHLY_REQUEST_LIMIT', 250);
-        $cacheKey = 'ai_scans_' . date('Y_m');
-        if ($monthlyLimit > 0) {
-            $currentUsage = (int) Cache::get($cacheKey, 0);
-            if ($currentUsage >= $monthlyLimit) {
-                throw new Exception("Monthly AI bill scan limit ({$monthlyLimit}) reached for this month. Please contact support to increase your quota.");
-            }
+        // Check monthly request limit (120 bills / month)
+        $quota = $this->getMonthlyUsage();
+        if ($quota['limit_reached']) {
+            throw new Exception("Is month ki AI bill scan limit ({$quota['monthly_limit']}) poori ho chuki hai. Aap is month mazeed bills scan nahi kar saktay. Aglay month quota automatically reset ho jaye ga.");
         }
 
         // 3. Resolve API key (Prioritize OpenAI GPT)
@@ -119,14 +161,14 @@ class AiBillScannerService
             throw new Exception('AI was unable to extract information from this document. Please ensure the invoice is clear and readable.');
         }
 
-        if ($monthlyLimit > 0) {
-            Cache::increment($cacheKey);
-        }
+        $cacheKey = 'ai_scans_' . date('Y_m');
+        Cache::increment($cacheKey);
 
         // 4. Match extracted data with inventory products and suppliers
         $matchedResult = $this->matchWithInventory($rawJson, $warehouseId);
         $matchedResult['bill_url'] = $billUrl;
         $matchedResult['filename'] = $filename;
+        $matchedResult['quota'] = $this->getMonthlyUsage();
 
         return $matchedResult;
     }

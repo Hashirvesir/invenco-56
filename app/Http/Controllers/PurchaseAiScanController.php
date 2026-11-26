@@ -27,6 +27,7 @@ class PurchaseAiScanController extends Controller
             'has_gemini' => $hasGemini,
             'has_openai' => $hasOpenAI,
             'masked_key' => $hasGemini ? '••••••••' . substr($service->resolveApiKey(null, 'gemini') ?? '', -4) : '',
+            'quota' => $service->getMonthlyUsage(),
         ]);
     }
 
