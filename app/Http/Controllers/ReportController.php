@@ -6243,6 +6243,16 @@ class ReportController extends BaseController
             ->get()
             ->groupBy('product_id');
 
+        $variantIds = $variantsByProduct->flatten()->pluck('id')->all();
+        $today = Carbon::today()->toDateString();
+        $avgCostMap = $this->averageCostBulk(
+            $productIds,
+            $variantIds,
+            $today,
+            $warehouse_id !== 0 ? $warehouse_id : null,
+            $selectedWarehouseIds
+        );
+
         // one grouped query for stock across selected warehouses
         $stockRows = product_warehouse::select(
             'product_id',
@@ -6292,7 +6302,10 @@ class ReportController extends BaseController
                 foreach ($variants as $variant) {
                     $vid = (int) $variant->id;
                     $qty = (float) ($stockMap[$product->id][$vid] ?? 0.0);
-                    $cost = (float) $variant->cost;               // ✅ default cost from variant
+                    $kstr = $product->id . ':' . $vid;
+                    $cost = isset($avgCostMap[$kstr]) && $avgCostMap[$kstr] > 0
+                        ? (float) $avgCostMap[$kstr]
+                        : (float) $variant->cost;
                     $value = $qty * $cost;
 
                     $names[] = $variant->name.' ('.$item['unit_name'].')';
@@ -6310,7 +6323,10 @@ class ReportController extends BaseController
             } else {
                 // non-variant product (Single/Combo/Service)
                 $qty = (float) ($stockMap[$product->id][0] ?? 0.0);
-                $cost = (float) $product->cost;                   // ✅ default cost from product
+                $kstr = $product->id . ':null';
+                $cost = isset($avgCostMap[$kstr]) && $avgCostMap[$kstr] > 0
+                    ? (float) $avgCostMap[$kstr]
+                    : (float) $product->cost;
                 $value = $product->type === 'is_service' ? 0.0 : ($qty * $cost);
 
                 $item['variant_name'] = '---';

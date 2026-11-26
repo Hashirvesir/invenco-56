@@ -132,7 +132,7 @@
                           </div>
 
                           <div class="d-flex align-items-center text-success mb-2" style="font-size: 13px;">
-                            <i class="i-Yes mr-2 font-weight-bold"></i> Powered by Google Gemini AI
+                            <i class="i-Yes mr-2 font-weight-bold"></i> Powered by OpenAI GPT Vision
                           </div>
                         </div>
 
@@ -1163,7 +1163,7 @@ export default {
       aiScan: {
         loading: false,
         configured: false,
-        provider: 'gemini',
+        provider: 'openai',
         apiKey: '',
         saveKey: true,
         showKeyInput: false,

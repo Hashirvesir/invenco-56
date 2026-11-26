@@ -7,6 +7,7 @@ use App\Models\Provider;
 use App\Models\Setting;
 use Exception;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -16,7 +17,7 @@ class AiBillScannerService
     /**
      * Resolve the active AI API key.
      */
-    public function resolveApiKey(?string $customKey = null, string $provider = 'gemini'): ?string
+    public function resolveApiKey(?string $customKey = null, string $provider = 'openai'): ?string
     {
         if (! empty($customKey)) {
             return trim($customKey);
@@ -24,16 +25,16 @@ class AiBillScannerService
 
         $setting = Setting::whereNull('deleted_at')->first();
 
-        if ($provider === 'openai') {
-            return env('OPENAI_API_KEY')
-                ?: config('services.openai.key')
-                ?: ($setting ? $setting->openai_api_key : null);
+        if ($provider === 'gemini') {
+            return env('GEMINI_API_KEY')
+                ?: config('services.gemini.key')
+                ?: ($setting ? $setting->gemini_api_key : null);
         }
 
-        // Default: Gemini
-        return env('GEMINI_API_KEY')
-            ?: config('services.gemini.key')
-            ?: ($setting ? $setting->gemini_api_key : null);
+        // Default: OpenAI
+        return env('OPENAI_API_KEY')
+            ?: config('services.openai.key')
+            ?: ($setting ? $setting->openai_api_key : null);
     }
 
     /**
@@ -83,27 +84,38 @@ class AiBillScannerService
 
         $base64Data = base64_encode(file_get_contents($savedFilePath));
 
-        // 3. Resolve API key
-        $setting = Setting::whereNull('deleted_at')->first();
-        $preferredProvider = $setting && $setting->ai_provider === 'openai' ? 'openai' : 'gemini';
+        // Check monthly request limit if configured
+        $monthlyLimit = (int) env('AI_MONTHLY_REQUEST_LIMIT', 250);
+        $cacheKey = 'ai_scans_' . date('Y_m');
+        if ($monthlyLimit > 0) {
+            $currentUsage = (int) Cache::get($cacheKey, 0);
+            if ($currentUsage >= $monthlyLimit) {
+                throw new Exception("Monthly AI bill scan limit ({$monthlyLimit}) reached for this month. Please contact support to increase your quota.");
+            }
+        }
 
-        $geminiKey = $this->resolveApiKey($customApiKey, 'gemini');
+        // 3. Resolve API key (Prioritize OpenAI GPT)
         $openaiKey = $this->resolveApiKey($customApiKey, 'openai');
+        $geminiKey = $this->resolveApiKey($customApiKey, 'gemini');
 
         $rawJson = null;
 
-        if ($geminiKey) {
-            $rawJson = $this->callGemini($geminiKey, $base64Data, $mimeType);
-        } elseif ($openaiKey) {
+        if ($openaiKey) {
             $rawJson = $this->callOpenAI($openaiKey, $base64Data, $mimeType);
+        } elseif ($geminiKey) {
+            $rawJson = $this->callGemini($geminiKey, $base64Data, $mimeType);
         } else {
             throw new Exception(
-                'Gemini API Key missing. Please set GEMINI_API_KEY in your .env file.'
+                'OpenAI API Key missing. Please set OPENAI_API_KEY in your .env file.'
             );
         }
 
         if (empty($rawJson)) {
             throw new Exception('AI was unable to extract information from this document. Please ensure the invoice is clear and readable.');
+        }
+
+        if ($monthlyLimit > 0) {
+            Cache::increment($cacheKey);
         }
 
         // 4. Match extracted data with inventory products and suppliers
@@ -217,24 +229,75 @@ PROMPT;
     }
 
     /**
-     * Fallback to OpenAI Vision API (gpt-4o-mini).
+     * Call OpenAI Vision API (gpt-4o / gpt-4o-mini).
      */
     protected function callOpenAI(string $apiKey, string $base64Data, string $mimeType): array
     {
-        $prompt = 'Extract all purchase bill details into JSON: supplier (name, phone, tax_number, address), invoice (ref, date YYYY-MM-DD, due_date), items (array of name, code, quantity, unit_cost, discount, tax_percent, total), financials (tax_amount, tax_rate, discount, shipping, grand_total, notes).';
+        $prompt = <<<PROMPT
+You are an expert purchase bill / invoice analyzer for an inventory ERP system.
+Read and extract all data from this purchase invoice / bill image.
+Return a STRICT JSON object only.
+
+The JSON schema must be exactly:
+{
+  "supplier": {
+    "name": "Vendor / Supplier Company Name",
+    "phone": "Phone number or empty string",
+    "tax_number": "Tax / NTN / VAT number or empty string",
+    "address": "Address or empty string"
+  },
+  "invoice": {
+    "ref": "Invoice / Bill / Reference number",
+    "date": "Invoice Date in YYYY-MM-DD format",
+    "due_date": "Due date in YYYY-MM-DD format or empty string"
+  },
+  "items": [
+    {
+      "name": "Item description or product name",
+      "code": "Item code, barcode, SKU or empty string",
+      "quantity": 1.0,
+      "unit_cost": 0.0,
+      "discount": 0.0,
+      "tax_percent": 0.0,
+      "total": 0.0
+    }
+  ],
+  "financials": {
+    "subtotal": 0.0,
+    "tax_amount": 0.0,
+    "tax_rate": 0.0,
+    "discount": 0.0,
+    "shipping": 0.0,
+    "grand_total": 0.0,
+    "notes": "Any payment terms or notes"
+  }
+}
+
+Rules:
+1. Extract ALL line items. For each item provide clear name, quantity, unit_cost, and total.
+2. If quantity is missing, default to 1.
+3. If unit_cost is missing but total is present, calculate unit_cost = total / quantity.
+4. Date MUST be normalized to YYYY-MM-DD.
+5. All numeric values must be numbers, not strings.
+PROMPT;
 
         $imageUrl = "data:{$mimeType};base64,{$base64Data}";
+        $model = env('OPENAI_MODEL', 'gpt-4o-mini');
 
-        $response = Http::timeout(45)
+        $response = Http::timeout(60)
             ->withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
                 'Content-Type' => 'application/json',
             ])
             ->post('https://api.openai.com/v1/chat/completions', [
-                'model' => 'gpt-4o-mini',
+                'model' => $model,
                 'response_format' => ['type' => 'json_object'],
                 'temperature' => 0.1,
                 'messages' => [
+                    [
+                        'role' => 'system',
+                        'content' => 'You extract purchase bills and return pure JSON conforming to the requested schema.',
+                    ],
                     [
                         'role' => 'user',
                         'content' => [
@@ -251,7 +314,7 @@ PROMPT;
         if ($response->successful()) {
             $json = $response->json();
             $content = $json['choices'][0]['message']['content'] ?? '';
-            $parsed = json_decode($content, true);
+            $parsed = json_decode($this->cleanJsonString($content), true);
             if (is_array($parsed)) {
                 return $parsed;
             }
