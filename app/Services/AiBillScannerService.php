@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Product;
+use App\Models\ProductVariant;
 use App\Models\Provider;
 use App\Models\Setting;
 use Exception;
@@ -101,7 +102,11 @@ class AiBillScannerService
         $rawJson = null;
 
         if ($openaiKey) {
-            $rawJson = $this->callOpenAI($openaiKey, $base64Data, $mimeType);
+            if ($extension === 'pdf') {
+                $rawJson = $this->handlePdfWithOpenAI($openaiKey, $savedFilePath);
+            } else {
+                $rawJson = $this->callOpenAI($openaiKey, $base64Data, $mimeType);
+            }
         } elseif ($geminiKey) {
             $rawJson = $this->callGemini($geminiKey, $base64Data, $mimeType);
         } else {
@@ -326,6 +331,203 @@ PROMPT;
     }
 
     /**
+     * Handle PDF documents when using OpenAI (since OpenAI vision does not accept application/pdf).
+     */
+    protected function handlePdfWithOpenAI(string $apiKey, string $pdfFilePath): array
+    {
+        $content = @file_get_contents($pdfFilePath);
+        if (!$content) {
+            throw new Exception("Unable to read PDF file for scanning.");
+        }
+
+        // 1. Try extracting raw text from PDF streams
+        $extractedText = $this->extractTextFromPdfContent($content);
+
+        if (mb_strlen(trim($extractedText)) > 30) {
+            return $this->callOpenAiWithText($apiKey, $extractedText);
+        }
+
+        // 2. If text was minimal (e.g. scanned document), try extracting an embedded image (DCTDecode / JPEG)
+        $embeddedImage = $this->extractFirstImageFromPdfContent($content);
+        if ($embeddedImage) {
+            return $this->callOpenAI($apiKey, base64_encode($embeddedImage), 'image/jpeg');
+        }
+
+        // 3. If Gemini key is available, fallback to Gemini which natively supports application/pdf
+        $geminiKey = env('GEMINI_API_KEY') ?: config('services.gemini.key');
+        if ($geminiKey) {
+            return $this->callGemini($geminiKey, base64_encode($content), 'application/pdf');
+        }
+
+        // 4. If we extracted some text even if short, give it a shot with OpenAI
+        if (!empty(trim($extractedText))) {
+            return $this->callOpenAiWithText($apiKey, $extractedText);
+        }
+
+        throw new Exception("PDF scanning: Is PDF se text ya image extract nahi ho saki. Barah-e-karam bill ki saaf picture (PNG/JPG) upload karein ya text-readable PDF dein.");
+    }
+
+    /**
+     * Extract plain text from PDF stream objects (pure PHP FlateDecode).
+     */
+    protected function extractTextFromPdfContent(string $content): string
+    {
+        $text = '';
+
+        if (preg_match_all('/stream[\r\n]+(.*?)[\r\n]+endstream/s', $content, $matches)) {
+            foreach ($matches[1] as $stream) {
+                $decompressed = @gzuncompress($stream);
+                $data = ($decompressed !== false) ? $decompressed : $stream;
+
+                if (preg_match_all('/\((.*?)\)\s*T[jJ]/s', $data, $textMatches)) {
+                    foreach ($textMatches[1] as $tm) {
+                        $cleaned = preg_replace('/\\\([()\\\\])/', '$1', $tm);
+                        $text .= ' ' . $cleaned;
+                    }
+                    $text .= "\n";
+                } elseif (preg_match_all('/\[(.*?)\]\s*TJ/s', $data, $tjMatches)) {
+                    foreach ($tjMatches[1] as $arrayContent) {
+                        if (preg_match_all('/\((.*?)\)/s', $arrayContent, $subMatches)) {
+                            foreach ($subMatches[1] as $sm) {
+                                $cleaned = preg_replace('/\\\([()\\\\])/', '$1', $sm);
+                                $text .= $cleaned;
+                            }
+                            $text .= ' ';
+                        }
+                    }
+                    $text .= "\n";
+                }
+            }
+        }
+
+        $text = preg_replace('/[ \t]+/', ' ', $text);
+        $text = preg_replace('/[\r\n]{2,}/', "\n", $text);
+
+        return trim($text);
+    }
+
+    /**
+     * Try extracting embedded JPEG images from PDF (/Filter /DCTDecode)
+     */
+    protected function extractFirstImageFromPdfContent(string $content): ?string
+    {
+        $offset = 0;
+        while (($pos = strpos($content, '/DCTDecode', $offset)) !== false) {
+            $streamPos = strpos($content, 'stream', $pos);
+            $endstreamPos = strpos($content, 'endstream', $streamPos);
+            if ($streamPos !== false && $endstreamPos !== false) {
+                $start = $streamPos + 6;
+                if (substr($content, $start, 2) === "\r\n") {
+                    $start += 2;
+                } elseif (substr($content, $start, 1) === "\n" || substr($content, $start, 1) === "\r") {
+                    $start += 1;
+                }
+                $imgData = substr($content, $start, $endstreamPos - $start);
+                if (str_starts_with($imgData, "\xFF\xD8\xFF")) {
+                    return $imgData;
+                }
+            }
+            $offset = $pos + 10;
+        }
+
+        return null;
+    }
+
+    /**
+     * Call OpenAI Chat Completion with text content extracted from document.
+     */
+    protected function callOpenAiWithText(string $apiKey, string $invoiceText): array
+    {
+        $prompt = <<<PROMPT
+You are an expert purchase bill / invoice analyzer for an inventory ERP system.
+Read and extract all data from this purchase invoice / bill text content.
+Return a STRICT JSON object only.
+
+The JSON schema must be exactly:
+{
+  "supplier": {
+    "name": "Vendor / Supplier Company Name",
+    "phone": "Phone number or empty string",
+    "tax_number": "Tax / NTN / VAT number or empty string",
+    "address": "Address or empty string"
+  },
+  "invoice": {
+    "ref": "Invoice / Bill / Purchase Order / Reference number",
+    "date": "Invoice Date in YYYY-MM-DD format",
+    "due_date": "Due date in YYYY-MM-DD format or empty string"
+  },
+  "items": [
+    {
+      "name": "Item description or product name",
+      "code": "Item code, barcode, SKU or empty string",
+      "quantity": 1.0,
+      "unit_cost": 0.0,
+      "discount": 0.0,
+      "tax_percent": 0.0,
+      "total": 0.0
+    }
+  ],
+  "financials": {
+    "subtotal": 0.0,
+    "tax_amount": 0.0,
+    "tax_rate": 0.0,
+    "discount": 0.0,
+    "shipping": 0.0,
+    "grand_total": 0.0,
+    "notes": "Any payment terms or notes"
+  }
+}
+
+Rules:
+1. Extract ALL line items. For each item provide clear name, quantity, unit_cost, and total.
+2. If quantity is missing, default to 1.
+3. If unit_cost is missing but total is present, calculate unit_cost = total / quantity.
+4. Date MUST be normalized to YYYY-MM-DD.
+5. All numeric values must be numbers, not strings.
+
+Document text content:
+---
+{$invoiceText}
+---
+PROMPT;
+
+        $model = env('OPENAI_MODEL', 'gpt-4o-mini');
+
+        $response = Http::withoutVerifying()
+            ->timeout(60)
+            ->withHeaders([
+                'Authorization' => 'Bearer ' . $apiKey,
+                'Content-Type' => 'application/json',
+            ])
+            ->post('https://api.openai.com/v1/chat/completions', [
+                'model' => $model,
+                'response_format' => ['type' => 'json_object'],
+                'temperature' => 0.1,
+                'messages' => [
+                    [
+                        'role' => 'system',
+                        'content' => 'You extract purchase bills and return pure JSON conforming to the requested schema.',
+                    ],
+                    [
+                        'role' => 'user',
+                        'content' => $prompt,
+                    ],
+                ],
+            ]);
+
+        if ($response->successful()) {
+            $json = $response->json();
+            $content = $json['choices'][0]['message']['content'] ?? '';
+            $parsed = json_decode($this->cleanJsonString($content), true);
+            if (is_array($parsed)) {
+                return $parsed;
+            }
+        }
+
+        throw new Exception('OpenAI Error: ' . ($response->json()['error']['message'] ?? $response->body()));
+    }
+
+    /**
      * Clean JSON string from potential markdown code fences.
      */
     protected function cleanJsonString(string $text): string
@@ -408,14 +610,23 @@ PROMPT;
             $itemTotal = (float) ($item['total'] ?? ($quantity * $unitCost));
 
             $matchedProduct = null;
+            $matchedVariantId = null;
 
-            // Search by code / barcode
+            // Search by code
             if ($itemCode) {
                 $matchedProduct = Product::whereNull('deleted_at')
-                    ->where(function ($q) use ($itemCode) {
-                        $q->where('code', $itemCode)
-                            ->orWhere('barcode', $itemCode);
-                    })->first();
+                    ->where('code', $itemCode)
+                    ->first();
+
+                if (! $matchedProduct) {
+                    $variant = ProductVariant::where('code', $itemCode)->first();
+                    if ($variant) {
+                        $matchedProduct = Product::whereNull('deleted_at')->find($variant->product_id);
+                        if ($matchedProduct) {
+                            $matchedVariantId = $variant->id;
+                        }
+                    }
+                }
             }
 
             // Search by name if code match didn't succeed
@@ -443,7 +654,7 @@ PROMPT;
                     'matched' => true,
                     'is_new' => false,
                     'product_id' => $matchedProduct->id,
-                    'product_variant_id' => null,
+                    'product_variant_id' => $matchedVariantId,
                     'name' => $matchedProduct->name,
                     'code' => $matchedProduct->code,
                     'extracted_name' => $itemName,
