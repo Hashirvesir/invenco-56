@@ -184,7 +184,8 @@ PROMPT;
             try {
                 $endpoint = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=" . urlencode($apiKey);
 
-                $response = Http::timeout(45)
+                $response = Http::withoutVerifying()
+                    ->timeout(45)
                     ->withHeaders(['Content-Type' => 'application/json'])
                     ->post($endpoint, [
                         'contents' => [
@@ -284,7 +285,8 @@ PROMPT;
         $imageUrl = "data:{$mimeType};base64,{$base64Data}";
         $model = env('OPENAI_MODEL', 'gpt-4o-mini');
 
-        $response = Http::timeout(60)
+        $response = Http::withoutVerifying()
+            ->timeout(60)
             ->withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
                 'Content-Type' => 'application/json',
