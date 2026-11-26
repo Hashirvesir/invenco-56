@@ -2142,19 +2142,20 @@ export default {
       this.makeToast('success', `Created ${created} new products!`, 'Success');
     },
 
-    quickCreateSupplierFromAi() {
+    async quickCreateSupplierFromAi() {
       if (!this.aiScan.result || !this.aiScan.result.supplier) return;
       const s = this.aiScan.result.supplier;
 
       NProgress.start();
-      axios.post('purchase-ai/quick-create-supplier', {
-        name: s.name,
-        phone: s.phone,
-        tax_number: s.tax_number,
-        adresse: s.address
-      }, { meta: { skipAuthRedirect: true } })
-      .then(({ data }) => {
+      try {
+        const { data } = await axios.post('purchase-ai/quick-create-supplier', {
+          name: s.name,
+          phone: s.phone,
+          tax_number: s.tax_number,
+          adresse: s.address
+        }, { meta: { skipAuthRedirect: true } });
         NProgress.done();
+
         if (data.success && data.supplier) {
           s.id = data.supplier.id;
           s.matched = true;
@@ -2163,16 +2164,26 @@ export default {
           this.purchase.supplier_id = data.supplier.id;
           this.makeToast('success', `Supplier "${data.supplier.name}" created and selected!`, 'Success');
         }
-      })
-      .catch(() => {
+      } catch (e) {
         NProgress.done();
         this.makeToast('danger', 'Failed to create supplier', 'Error');
-      });
+      }
     },
 
-    applyAiResultsToPurchase() {
+    async applyAiResultsToPurchase() {
       if (!this.aiScan.result) return;
       const res = this.aiScan.result;
+
+      // Auto-create supplier if new and not created yet
+      if (res.supplier && !res.supplier.id && res.supplier.name && res.supplier.name !== 'Unknown Supplier') {
+        await this.quickCreateSupplierFromAi();
+      }
+
+      // Auto-create any remaining unmatched products so none are missed
+      const unmatched = (res.items || []).filter(i => !i.product_id);
+      if (unmatched.length > 0) {
+        await this.quickCreateAllUnmatchedProducts();
+      }
 
       // 1. Supplier
       if (res.supplier && res.supplier.id) {
