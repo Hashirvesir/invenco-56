@@ -109,6 +109,7 @@ trait CalculatesCogsAndAverageCost
         // FIFO: iterate keys once with preloaded rows
         $totalFifo = 0.0;
         $totalAvg = 0.0;
+        $byKey = [];
 
         foreach ($soldKeys as $k) {
             $kstr = $key($k->product_id, $k->product_variant_id);
@@ -128,13 +129,24 @@ trait CalculatesCogsAndAverageCost
                 }
             }
 
-            $totalAvg += $avg * $qtySold;
+            $keyAvgTotal = $avg * $qtySold;
+            $totalAvg += $keyAvgTotal;
 
             // ---- FIFO ----
+            $keyFifoTotal = 0.0;
             $layers = ($purchases[$kstr] ?? collect())->values(); // list of {quantity, cost}
             if ($layers->isEmpty()) {
                 // no purchases -> fallback to average (which may already include product.cost fallback)
-                $totalFifo += $avg * $qtySold;
+                $keyFifoTotal = $avg * $qtySold;
+                $totalFifo += $keyFifoTotal;
+
+                $byKey[$kstr] = [
+                    'qty'        => $qtySold,
+                    'unit_avg'   => $avg,
+                    'total_avg'  => $keyAvgTotal,
+                    'unit_fifo'  => $avg,
+                    'total_fifo' => $keyFifoTotal,
+                ];
 
                 continue;
             }
@@ -162,7 +174,7 @@ trait CalculatesCogsAndAverageCost
             while ($remain > 0) {
                 if ($i >= $layers->count()) {
                     // ran out of layers -> fallback to avg (which may already include product.cost fallback) for the rest
-                    $totalFifo += $avg * $remain;
+                    $keyFifoTotal += $avg * $remain;
                     $remain = 0;
                     break;
                 }
@@ -175,16 +187,26 @@ trait CalculatesCogsAndAverageCost
                 }
 
                 $take = min($q, $remain);
-                $totalFifo += $take * $c;
+                $keyFifoTotal += $take * $c;
                 $layers[$i]->quantity = $q - $take;
                 $remain -= $take;
                 if ($layers[$i]->quantity <= 0) {
                     $i++;
                 }
             }
+
+            $totalFifo += $keyFifoTotal;
+
+            $byKey[$kstr] = [
+                'qty'        => $qtySold,
+                'unit_avg'   => $avg,
+                'total_avg'  => $keyAvgTotal,
+                'unit_fifo'  => $qtySold > 0 ? $keyFifoTotal / $qtySold : 0,
+                'total_fifo' => $keyFifoTotal,
+            ];
         }
 
-        return ['fifo' => $totalFifo, 'avg' => $totalAvg];
+        return ['fifo' => $totalFifo, 'avg' => $totalAvg, 'by_key' => $byKey];
     }
 
     /**

@@ -98,7 +98,7 @@ class AiBillScannerService
             $rawJson = $this->callOpenAI($openaiKey, $base64Data, $mimeType);
         } else {
             throw new Exception(
-                'AI API Key missing. Please provide a Google Gemini API Key in Settings or in the scan window.'
+                'Gemini API Key missing. Please set GEMINI_API_KEY in your .env file.'
             );
         }
 

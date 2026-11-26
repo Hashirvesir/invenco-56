@@ -44,33 +44,69 @@
 
     <!-- Summary Cards -->
     <b-row class="mb-3" v-if="!isLoading">
-      <b-col md="3" sm="6">
-        <div class="summary-card bg-primary">
+      <b-col md="4" sm="12" class="mb-2">
+        <div class="summary-card bg-primary shadow-sm h-100 d-flex flex-column justify-content-center">
           <div class="summary-label">{{ $t('TotalSales') }}</div>
           <div class="summary-value">{{ formatPrice(summary.total_sales) }}</div>
         </div>
       </b-col>
-      <b-col md="3" sm="6">
-        <div class="summary-card bg-warning">
-          <div class="summary-label">{{ $t('TotalCost') }}</div>
-          <div class="summary-value">{{ formatPrice(summary.total_cost) }}</div>
+      <b-col md="4" sm="6" class="mb-2">
+        <div class="summary-card shadow-sm h-100" style="background-color: #0891b2;">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <span class="summary-label font-weight-bold">FIFO</span>
+            <span class="badge badge-light text-dark font-weight-bold">{{ summary.avg_margin_fifo }}% Margin</span>
+          </div>
+          <div class="d-flex justify-content-between mt-2 pt-2 border-top border-white-50">
+            <div>
+              <div class="small opacity-75">Total Cost</div>
+              <div class="h5 mb-0 font-weight-bold">{{ formatPrice(summary.total_cost_fifo) }}</div>
+            </div>
+            <div class="text-right">
+              <div class="small opacity-75">Gross Profit</div>
+              <div class="h5 mb-0 font-weight-bold">{{ formatPrice(summary.gross_profit_fifo) }}</div>
+            </div>
+          </div>
         </div>
       </b-col>
-      <b-col md="3" sm="6">
-        <div class="summary-card bg-success">
-          <div class="summary-label">{{ $t('GrossProfit') }}</div>
-          <div class="summary-value">{{ formatPrice(summary.gross_profit) }}</div>
-        </div>
-      </b-col>
-      <b-col md="3" sm="6">
-        <div class="summary-card bg-info">
-          <div class="summary-label">{{ $t('AverageMargin') }}</div>
-          <div class="summary-value">{{ summary.avg_margin }}%</div>
+      <b-col md="4" sm="6" class="mb-2">
+        <div class="summary-card shadow-sm h-100" style="background-color: #d97706;">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <span class="summary-label font-weight-bold">{{ $t('AverageCost') || 'Average Cost' }}</span>
+            <span class="badge badge-light text-dark font-weight-bold">{{ summary.avg_margin_avg }}% Margin</span>
+          </div>
+          <div class="d-flex justify-content-between mt-2 pt-2 border-top border-white-50">
+            <div>
+              <div class="small opacity-75">Total Cost</div>
+              <div class="h5 mb-0 font-weight-bold">{{ formatPrice(summary.total_cost_avg) }}</div>
+            </div>
+            <div class="text-right">
+              <div class="small opacity-75">Gross Profit</div>
+              <div class="h5 mb-0 font-weight-bold">{{ formatPrice(summary.gross_profit_avg) }}</div>
+            </div>
+          </div>
         </div>
       </b-col>
     </b-row>
 
     <b-card v-if="!isLoading">
+      <!-- View Mode Filter -->
+      <div class="d-flex flex-wrap justify-content-between align-items-center mb-3">
+        <div class="d-flex align-items-center mb-2">
+          <span class="mr-2 font-weight-bold text-muted small text-uppercase">Calculation Mode:</span>
+          <b-button-group size="sm">
+            <b-button :variant="viewMode === 'both' ? 'primary' : 'outline-primary'" @click="viewMode = 'both'">
+              Both (FIFO & Avg)
+            </b-button>
+            <b-button :variant="viewMode === 'fifo' ? 'info' : 'outline-info'" @click="viewMode = 'fifo'">
+              FIFO
+            </b-button>
+            <b-button :variant="viewMode === 'avg' ? 'warning' : 'outline-warning'" @click="viewMode = 'avg'">
+              Average Cost
+            </b-button>
+          </b-button-group>
+        </div>
+      </div>
+
       <vue-good-table
         mode="remote"
         :columns="columns"
@@ -99,20 +135,17 @@
         </div>
 
         <template slot="table-row" slot-scope="props">
-          <span v-if="props.column.field === 'total_cost_amount'">
-            {{ formatPrice(props.row.total_cost_amount) }}
+          <span v-if="['total_sale_amount', 'total_cost_amount', 'total_cost_fifo', 'total_cost_avg', 'cost_per_unit', 'cost_per_unit_fifo', 'cost_per_unit_avg'].includes(props.column.field)">
+            {{ formatPrice(props.row[props.column.field]) }}
           </span>
-          <span v-else-if="props.column.field === 'total_sale_amount'">
-            {{ formatPrice(props.row.total_sale_amount) }}
-          </span>
-          <span v-else-if="props.column.field === 'gross_profit'">
-            <span :class="props.row.gross_profit >= 0 ? 'text-success font-weight-bold' : 'text-danger font-weight-bold'">
-              {{ formatPrice(props.row.gross_profit) }}
+          <span v-else-if="props.column.field === 'gross_profit' || props.column.field === 'gross_profit_fifo' || props.column.field === 'gross_profit_avg'">
+            <span :class="props.row[props.column.field] >= 0 ? 'text-success font-weight-bold' : 'text-danger font-weight-bold'">
+              {{ formatPrice(props.row[props.column.field]) }}
             </span>
           </span>
-          <span v-else-if="props.column.field === 'margin_pct'">
-            <span :class="marginClass(props.row.margin_pct)">
-              {{ props.row.margin_pct }}%
+          <span v-else-if="props.column.field === 'margin_pct' || props.column.field === 'margin_pct_fifo' || props.column.field === 'margin_pct_avg'">
+            <span :class="marginClass(props.row[props.column.field])">
+              {{ props.row[props.column.field] }}%
             </span>
           </span>
           <span v-else>{{ props.formattedRow[props.column.field] }}</span>
@@ -138,7 +171,19 @@ export default {
       totalRows: 0,
       rows: [],
       warehouses: [],
-      summary: { total_sales: 0, total_cost: 0, gross_profit: 0, avg_margin: 0 },
+      viewMode: 'both',
+      summary: {
+        total_sales: 0,
+        total_cost_fifo: 0,
+        gross_profit_fifo: 0,
+        avg_margin_fifo: 0,
+        total_cost_avg: 0,
+        gross_profit_avg: 0,
+        avg_margin_avg: 0,
+        total_cost: 0,
+        gross_profit: 0,
+        avg_margin: 0,
+      },
       serverParams: { page: 1, perPage: 10, sortField: 'total_sale_amount', sortType: 'desc' },
       filter: {
         from: moment().subtract(29, 'days').format('YYYY-MM-DD'),
@@ -153,15 +198,42 @@ export default {
   computed: {
     ...mapGetters(['currentUser']),
     columns() {
+      const baseCols = [
+        { label: this.$t('ProductName'), field: 'product_name', tdClass: 'text-left', thClass: 'text-left' },
+        { label: this.$t('warehouse'), field: 'warehouse_name', tdClass: 'text-left', thClass: 'text-left' },
+        { label: this.$t('QuantitySold'), field: 'quantity_sold', tdClass: 'text-left', thClass: 'text-left', type: 'number' },
+        { label: this.$t('TotalSaleAmount'), field: 'total_sale_amount', tdClass: 'text-left', thClass: 'text-left' },
+      ];
+
+      if (this.viewMode === 'fifo') {
+        return [
+          ...baseCols,
+          { label: 'Cost/Unit (FIFO)', field: 'cost_per_unit_fifo', tdClass: 'text-left', thClass: 'text-left', type: 'number' },
+          { label: 'Total Cost (FIFO)', field: 'total_cost_fifo', tdClass: 'text-left', thClass: 'text-left' },
+          { label: 'Profit (FIFO)', field: 'gross_profit_fifo', tdClass: 'text-left', thClass: 'text-left' },
+          { label: 'Margin (FIFO)', field: 'margin_pct_fifo', tdClass: 'text-left', thClass: 'text-left' },
+        ];
+      }
+
+      if (this.viewMode === 'avg') {
+        return [
+          ...baseCols,
+          { label: 'Cost/Unit (Avg)', field: 'cost_per_unit_avg', tdClass: 'text-left', thClass: 'text-left', type: 'number' },
+          { label: 'Total Cost (Avg)', field: 'total_cost_avg', tdClass: 'text-left', thClass: 'text-left' },
+          { label: 'Profit (Avg)', field: 'gross_profit_avg', tdClass: 'text-left', thClass: 'text-left' },
+          { label: 'Margin (Avg)', field: 'margin_pct_avg', tdClass: 'text-left', thClass: 'text-left' },
+        ];
+      }
+
+      // 'both' (default)
       return [
-        { label: this.$t('ProductName'),        field: 'product_name',      tdClass: 'text-left', thClass: 'text-left' },
-        { label: this.$t('warehouse'),           field: 'warehouse_name',    tdClass: 'text-left', thClass: 'text-left' },
-        { label: this.$t('QuantitySold'),        field: 'quantity_sold',     tdClass: 'text-left', thClass: 'text-left', type: 'number' },
-        { label: this.$t('CostPerUnit'),         field: 'cost_per_unit',     tdClass: 'text-left', thClass: 'text-left', type: 'number' },
-        { label: this.$t('TotalCostAmount'),     field: 'total_cost_amount', tdClass: 'text-left', thClass: 'text-left' },
-        { label: this.$t('TotalSaleAmount'),     field: 'total_sale_amount', tdClass: 'text-left', thClass: 'text-left' },
-        { label: this.$t('GrossProfit'),         field: 'gross_profit',      tdClass: 'text-left', thClass: 'text-left' },
-        { label: this.$t('MarginPercent'),       field: 'margin_pct',        tdClass: 'text-left', thClass: 'text-left' },
+        ...baseCols,
+        { label: 'Cost/Unit (FIFO)', field: 'cost_per_unit_fifo', tdClass: 'text-left', thClass: 'text-left', type: 'number' },
+        { label: 'Profit (FIFO)', field: 'gross_profit_fifo', tdClass: 'text-left', thClass: 'text-left' },
+        { label: 'Margin (FIFO)', field: 'margin_pct_fifo', tdClass: 'text-left', thClass: 'text-left' },
+        { label: 'Cost/Unit (Avg)', field: 'cost_per_unit_avg', tdClass: 'text-left', thClass: 'text-left', type: 'number' },
+        { label: 'Profit (Avg)', field: 'gross_profit_avg', tdClass: 'text-left', thClass: 'text-left' },
+        { label: 'Margin (Avg)', field: 'margin_pct_avg', tdClass: 'text-left', thClass: 'text-left' },
       ];
     },
   },
@@ -252,32 +324,19 @@ export default {
       const hasFilters = filterItems.length > 0;
 
       // Table body
-      const body = this.rows.map(r => [
-        r.product_name,
-        r.warehouse_name,
-        parseFloat(r.quantity_sold || 0).toFixed(2),
-        parseFloat(r.cost_per_unit || 0).toFixed(2),
-        parseFloat(r.total_cost_amount || 0).toFixed(2),
-        parseFloat(r.total_sale_amount || 0).toFixed(2),
-        parseFloat(r.gross_profit || 0).toFixed(2),
-        parseFloat(r.margin_pct || 0).toFixed(2) + '%',
-      ]);
+      const body = this.rows.map(r => this.columns.map(c => {
+        const val = r[c.field];
+        if (c.field && c.field.includes('margin_pct')) return (val || 0) + '%';
+        if (typeof val === 'number') return parseFloat(val || 0).toFixed(2);
+        return val !== null && val !== undefined ? String(val) : '';
+      }));
 
       const s = this.summary;
-      const foot = [[
-        this.$t('Total') || 'Total', '', '',  '',
-        parseFloat(s.total_cost || 0).toFixed(2),
-        parseFloat(s.total_sales || 0).toFixed(2),
-        parseFloat(s.gross_profit || 0).toFixed(2),
-        parseFloat(s.avg_margin || 0).toFixed(2) + '%',
-      ]];
-
       const headers = this.columns.map(c => c.label);
 
       autoTable(pdf, {
         head: [headers],
         body,
-        foot,
         startY: hasFilters ? 148 : 110,
         theme: 'striped',
         margin: { left: marginX, right: marginX },
@@ -333,14 +392,15 @@ export default {
           const currency = (this.currentUser && this.currentUser.currency) ? this.currentUser.currency + ' ' : '';
           const summaryItems = [
             `Total Sales: ${currency}${parseFloat(s.total_sales || 0).toFixed(2)}`,
-            `Total Cost: ${currency}${parseFloat(s.total_cost || 0).toFixed(2)}`,
-            `Gross Profit: ${currency}${parseFloat(s.gross_profit || 0).toFixed(2)}`,
-            `Avg Margin: ${parseFloat(s.avg_margin || 0).toFixed(2)}%`,
+            `FIFO Cost: ${currency}${parseFloat(s.total_cost_fifo || 0).toFixed(2)}`,
+            `FIFO Profit: ${currency}${parseFloat(s.gross_profit_fifo || 0).toFixed(2)}`,
+            `Avg Cost: ${currency}${parseFloat(s.total_cost_avg || 0).toFixed(2)}`,
+            `Avg Profit: ${currency}${parseFloat(s.gross_profit_avg || 0).toFixed(2)}`,
           ];
           pdf.setFillColor(245, 247, 250);
           pdf.rect(0, sumY, pageW, 34, 'F');
           pdf.setFont('Vazirmatn', 'normal');
-          pdf.setFontSize(8.5);
+          pdf.setFontSize(8);
           pdf.setTextColor(33);
           const colW = (pageW - 2 * marginX) / summaryItems.length;
           summaryItems.forEach((txt, i) => {

@@ -10249,65 +10249,30 @@ public function draftInvoices(Request $request)
         }
         $dir     = $request->filled('SortType')  ? $request->SortType  : 'desc';
 
-        // Date condition for purchase pricing (purchases up to the report's end date)
-        $purchDateCondition = $to ? "AND p.date <= " . DB::getPdo()->quote($to) : "";
+        $start = $from ?: '2020-01-01';
+        $end = $to ?: Carbon::today()->toDateString();
 
-        // Average purchase cost subqueries (warehouse-specific and across all warehouses)
-        $whPurchSub = "(
-            SELECT
-                pd.product_id,
-                COALESCE(pd.product_variant_id, 0) as variant_id,
-                p.warehouse_id,
-                SUM(pd.quantity * pd.cost) / NULLIF(SUM(
-                    CASE 
-                        WHEN u.operator = '/' THEN pd.quantity / COALESCE(NULLIF(u.operator_value, 0), 1)
-                        WHEN u.operator = '*' THEN pd.quantity * COALESCE(u.operator_value, 1)
-                        ELSE pd.quantity 
-                    END
-                ), 0) as avg_cost
-            FROM purchase_details pd
-            JOIN purchases p ON pd.purchase_id = p.id
-            LEFT JOIN units u ON pd.purchase_unit_id = u.id
-            WHERE p.deleted_at IS NULL AND p.statut = 'received' {$purchDateCondition}
-            GROUP BY pd.product_id, COALESCE(pd.product_variant_id, 0), p.warehouse_id
-        ) as wh_purch";
+        // Warehouses visible to user
+        if ($is_all_warehouses) {
+            $warehouses = Warehouse::whereNull('deleted_at')->get(['id', 'name']);
+            $whIds = $warehouses->pluck('id')->all();
+        } else {
+            $warehouses = Warehouse::whereNull('deleted_at')
+                ->whereIn('id', $allowedWarehouseIds)->get(['id', 'name']);
+            $whIds = $allowedWarehouseIds;
+        }
 
-        $allPurchSub = "(
-            SELECT
-                pd.product_id,
-                COALESCE(pd.product_variant_id, 0) as variant_id,
-                SUM(pd.quantity * pd.cost) / NULLIF(SUM(
-                    CASE 
-                        WHEN u.operator = '/' THEN pd.quantity / COALESCE(NULLIF(u.operator_value, 0), 1)
-                        WHEN u.operator = '*' THEN pd.quantity * COALESCE(u.operator_value, 1)
-                        ELSE pd.quantity 
-                    END
-                ), 0) as avg_cost
-            FROM purchase_details pd
-            JOIN purchases p ON pd.purchase_id = p.id
-            LEFT JOIN units u ON pd.purchase_unit_id = u.id
-            WHERE p.deleted_at IS NULL AND p.statut = 'received' {$purchDateCondition}
-            GROUP BY pd.product_id, COALESCE(pd.product_variant_id, 0)
-        ) as all_purch";
+        // Calculate FIFO and Average COGS using the exact same logic as ProfitAndLoss
+        $cogsPack = $this->calcCogsAndAvgCostFast($start, $end, $warehouse_id, $whIds);
+        $byKey = $cogsPack['by_key'] ?? [];
 
-        $effectiveCost = "COALESCE(wh_purch.avg_cost, all_purch.avg_cost, product_variants.cost, products.cost, 0)";
-
-        // Build base query grouped by product + warehouse
+        // Build base query grouped by product + warehouse + variant
         $query = SaleDetail::query()
             ->join('sales', 'sale_details.sale_id', '=', 'sales.id')
             ->join('products', 'sale_details.product_id', '=', 'products.id')
             ->join('warehouses', 'sales.warehouse_id', '=', 'warehouses.id')
             ->leftJoin('product_variants', function ($join) {
                 $join->on('sale_details.product_variant_id', '=', 'product_variants.id');
-            })
-            ->leftJoin(DB::raw($whPurchSub), function ($j) {
-                $j->on('wh_purch.product_id', '=', 'sale_details.product_id')
-                  ->on('wh_purch.variant_id', '=', DB::raw('COALESCE(sale_details.product_variant_id, 0)'))
-                  ->on('wh_purch.warehouse_id', '=', 'sales.warehouse_id');
-            })
-            ->leftJoin(DB::raw($allPurchSub), function ($j) {
-                $j->on('all_purch.product_id', '=', 'sale_details.product_id')
-                  ->on('all_purch.variant_id', '=', DB::raw('COALESCE(sale_details.product_variant_id, 0)'));
             })
             ->whereNull('sales.deleted_at')
             ->whereNull('products.deleted_at')
@@ -10339,22 +10304,17 @@ public function draftInvoices(Request $request)
             ->selectRaw("
                 sale_details.product_id,
                 sales.warehouse_id,
+                sale_details.product_variant_id,
                 CASE
                     WHEN sale_details.product_variant_id IS NOT NULL
                     THEN CONCAT('[', product_variants.name, '] ', products.name)
                     ELSE products.name
                 END AS product_name,
                 warehouses.name AS warehouse_name,
+                products.cost AS product_cost,
+                product_variants.cost AS variant_cost,
                 SUM(sale_details.quantity) AS quantity_sold,
-                ROUND({$effectiveCost}, 2) AS cost_per_unit,
-                SUM(sale_details.quantity * {$effectiveCost}) AS total_cost_amount,
-                SUM(sale_details.total) AS total_sale_amount,
-                SUM(sale_details.total) - SUM(sale_details.quantity * {$effectiveCost}) AS gross_profit,
-                CASE
-                    WHEN SUM(sale_details.total) > 0
-                    THEN ROUND(((SUM(sale_details.total) - SUM(sale_details.quantity * {$effectiveCost})) / SUM(sale_details.total)) * 100, 2)
-                    ELSE 0
-                END AS margin_pct
+                SUM(sale_details.total) AS total_sale_amount
             ")
             ->groupBy(
                 'sale_details.product_id',
@@ -10364,93 +10324,102 @@ public function draftInvoices(Request $request)
                 'product_variants.name',
                 'warehouses.name',
                 'products.cost',
-                'product_variants.cost',
-                'wh_purch.avg_cost',
-                'all_purch.avg_cost'
+                'product_variants.cost'
             );
 
-        $totalRows = $query->get()->count();
+        $allRows = $query->get()->map(function ($r) use ($byKey) {
+            $kstr = $r->product_id . ':' . ($r->product_variant_id ?? 'null');
+            $costInfo = $byKey[$kstr] ?? null;
 
+            $unitAvg = $costInfo ? (float) $costInfo['unit_avg'] : (float) ($r->variant_cost ?: $r->product_cost ?: 0);
+            $unitFifo = $costInfo ? (float) $costInfo['unit_fifo'] : (float) ($r->variant_cost ?: $r->product_cost ?: 0);
+
+            $qty = (float) $r->quantity_sold;
+            $sales = (float) $r->total_sale_amount;
+
+            $costFifo = $qty * $unitFifo;
+            $profitFifo = $sales - $costFifo;
+            $marginFifo = $sales > 0 ? round(($profitFifo / $sales) * 100, 2) : 0;
+
+            $costAvg = $qty * $unitAvg;
+            $profitAvg = $sales - $costAvg;
+            $marginAvg = $sales > 0 ? round(($profitAvg / $sales) * 100, 2) : 0;
+
+            return [
+                'product_id' => $r->product_id,
+                'warehouse_id' => $r->warehouse_id,
+                'product_name' => $r->product_name,
+                'warehouse_name' => $r->warehouse_name,
+                'quantity_sold' => $qty,
+                'total_sale_amount' => $sales,
+
+                // FIFO
+                'cost_per_unit_fifo' => round($unitFifo, 2),
+                'total_cost_fifo' => round($costFifo, 2),
+                'gross_profit_fifo' => round($profitFifo, 2),
+                'margin_pct_fifo' => $marginFifo,
+
+                // Average
+                'cost_per_unit_avg' => round($unitAvg, 2),
+                'total_cost_avg' => round($costAvg, 2),
+                'gross_profit_avg' => round($profitAvg, 2),
+                'margin_pct_avg' => $marginAvg,
+
+                // Default / backward compat
+                'cost_per_unit' => round($unitAvg, 2),
+                'total_cost_amount' => round($costAvg, 2),
+                'gross_profit' => round($profitAvg, 2),
+                'margin_pct' => $marginAvg,
+            ];
+        });
+
+        // Sorting
+        $sortKey = $request->filled('SortField') ? $request->SortField : 'total_sale_amount';
+        if ($sortKey === 'id') $sortKey = 'product_id';
+        if ($sortKey === 'total_cost') $sortKey = 'total_cost_amount';
+
+        $allRows = strtolower($dir) === 'asc'
+            ? $allRows->sortBy($sortKey)->values()
+            : $allRows->sortByDesc($sortKey)->values();
+
+        $totalRows = $allRows->count();
         if ($perPage == -1) {
             $perPage = $totalRows;
         }
 
-        $data = $query->orderBy($order, $dir)
-            ->offset($offSet)
-            ->limit($perPage)
-            ->get()
-            ->toArray();
+        $data = $allRows->slice($offSet, $perPage)->values()->toArray();
 
-        // Summary totals across ALL matching rows (not just current page)
-        $summaryQuery = SaleDetail::query()
-            ->join('sales', 'sale_details.sale_id', '=', 'sales.id')
-            ->join('products', 'sale_details.product_id', '=', 'products.id')
-            ->leftJoin('product_variants', function ($join) {
-                $join->on('sale_details.product_variant_id', '=', 'product_variants.id');
-            })
-            ->leftJoin(DB::raw($whPurchSub), function ($j) {
-                $j->on('wh_purch.product_id', '=', 'sale_details.product_id')
-                  ->on('wh_purch.variant_id', '=', DB::raw('COALESCE(sale_details.product_variant_id, 0)'))
-                  ->on('wh_purch.warehouse_id', '=', 'sales.warehouse_id');
-            })
-            ->leftJoin(DB::raw($allPurchSub), function ($j) {
-                $j->on('all_purch.product_id', '=', 'sale_details.product_id')
-                  ->on('all_purch.variant_id', '=', DB::raw('COALESCE(sale_details.product_variant_id, 0)'));
-            })
-            ->whereNull('sales.deleted_at')
-            ->whereNull('products.deleted_at')
-            ->when($from && $to, fn($q) => $q->whereBetween('sale_details.date', [$from, $to]))
-            ->when($from && !$to, fn($q) => $q->where('sale_details.date', '>=', $from))
-            ->when(!$from && $to, fn($q) => $q->where('sale_details.date', '<=', $to))
-            ->where(function ($q) use ($view_records) {
-                if (!$view_records) {
-                    $q->where('sales.user_id', Auth::id());
-                }
-            })
-            ->where(function ($q) use ($is_all_warehouses, $allowedWarehouseIds) {
-                if (!$is_all_warehouses) {
-                    $q->whereIn('sales.warehouse_id', $allowedWarehouseIds);
-                }
-            })
-            ->where(function ($q) use ($warehouse_id) {
-                if ($warehouse_id) {
-                    $q->where('sales.warehouse_id', $warehouse_id);
-                }
-            })
-            ->where(function ($q) use ($request) {
-                if ($request->filled('search')) {
-                    $s = $request->search;
-                    $q->where('products.name', 'LIKE', "%{$s}%");
-                }
-            })
-            ->selectRaw("
-                SUM(sale_details.total) AS total_sales,
-                SUM(sale_details.quantity * {$effectiveCost}) AS total_cost
-            ")
-            ->first();
+        // Summary
+        $totalSales = (float) $allRows->sum('total_sale_amount');
+        $totalCostFifo = (float) $allRows->sum('total_cost_fifo');
+        $grossProfitFifo = $totalSales - $totalCostFifo;
+        $avgMarginFifo = $totalSales > 0 ? round(($grossProfitFifo / $totalSales) * 100, 2) : 0;
 
-        $totalSales  = $summaryQuery ? (float) $summaryQuery->total_sales  : 0;
-        $totalCost   = $summaryQuery ? (float) $summaryQuery->total_cost   : 0;
-        $grossProfit = $totalSales - $totalCost;
-        $avgMargin   = $totalSales > 0 ? round(($grossProfit / $totalSales) * 100, 2) : 0;
-
-        // Warehouses for filter dropdown
-        if ($is_all_warehouses) {
-            $warehouses = Warehouse::whereNull('deleted_at')->get(['id', 'name']);
-        } else {
-            $warehouses = Warehouse::whereNull('deleted_at')
-                ->whereIn('id', $allowedWarehouseIds)->get(['id', 'name']);
-        }
+        $totalCostAvg = (float) $allRows->sum('total_cost_avg');
+        $grossProfitAvg = $totalSales - $totalCostAvg;
+        $avgMarginAvg = $totalSales > 0 ? round(($grossProfitAvg / $totalSales) * 100, 2) : 0;
 
         return response()->json([
             'totalRows'   => $totalRows,
             'data'        => $data,
             'warehouses'  => $warehouses,
             'summary'     => [
-                'total_sales'  => $totalSales,
-                'total_cost'   => $totalCost,
-                'gross_profit' => $grossProfit,
-                'avg_margin'   => $avgMargin,
+                'total_sales'        => $totalSales,
+
+                // FIFO
+                'total_cost_fifo'    => round($totalCostFifo, 2),
+                'gross_profit_fifo'  => round($grossProfitFifo, 2),
+                'avg_margin_fifo'    => $avgMarginFifo,
+
+                // Average
+                'total_cost_avg'     => round($totalCostAvg, 2),
+                'gross_profit_avg'   => round($grossProfitAvg, 2),
+                'avg_margin_avg'     => $avgMarginAvg,
+
+                // Backward compat
+                'total_cost'         => round($totalCostAvg, 2),
+                'gross_profit'       => round($grossProfitAvg, 2),
+                'avg_margin'         => $avgMarginAvg,
             ],
         ]);
     }

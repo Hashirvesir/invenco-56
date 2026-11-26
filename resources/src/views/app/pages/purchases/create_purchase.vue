@@ -47,16 +47,16 @@
                 <!-- Modal: AI Purchase Bill Scanner -->
                 <b-modal
                   id="ai_bill_scan_modal"
+                  dialog-class="ai-bill-modal-wide"
                   size="xl"
                   hide-footer
                   title="🤖 AI Purchase Bill Scanner"
-                  header-bg-variant="light"
                 >
                   <!-- Step 1: Upload / Scanning Screen (when no results yet) -->
-                  <div v-if="!aiScan.result">
+                  <div v-if="!aiScan.result" class="p-2">
                     <b-row>
                       <!-- Left: Upload Box -->
-                      <b-col md="7" sm="12" class="border-right">
+                      <b-col md="7" sm="12" class="pr-md-4 border-right">
                         <h6 class="font-weight-bold text-primary mb-2">1. Upload Supplier Bill / Invoice</h6>
                         <p class="text-muted small mb-3">
                           Supported formats: <strong>JPG, PNG, WEBP, PDF</strong> (up to 10MB). Mobile camera photos or scanned invoices work great!
@@ -65,7 +65,7 @@
                         <!-- Drag & Drop / File Input Zone -->
                         <div
                           class="ai-dropzone p-4 text-center mb-3"
-                          style="border: 2px dashed #6366f1; border-radius: 12px; background: #f8fafc; cursor: pointer; transition: all 0.2s;"
+                          style="border: 2px dashed #6366f1; border-radius: 12px; background: #ffffff; cursor: pointer; transition: all 0.2s;"
                           @click="$refs.aiBillFileInput.click()"
                         >
                           <input
@@ -78,20 +78,20 @@
                           />
 
                           <div v-if="!aiScan.filePreview && !aiScan.file">
-                            <div style="font-size: 42px; color: #6366f1;" class="mb-2">
+                            <div style="font-size: 48px; color: #6366f1;" class="mb-2">
                               <i class="i-Upload"></i>
                             </div>
-                            <h6 class="font-weight-bold mb-1">Click to browse or take a photo</h6>
+                            <h5 class="font-weight-bold mb-1 text-dark">Click to browse or take a photo</h5>
                             <small class="text-muted">Drag & drop your receipt / invoice file here</small>
                           </div>
 
                           <!-- Selected File Preview -->
                           <div v-else class="text-center">
                             <div v-if="aiScan.fileType === 'image'" class="mb-2">
-                              <img :src="aiScan.filePreview" alt="Bill Preview" style="max-height: 180px; max-width: 100%; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);" />
+                              <img :src="aiScan.filePreview" alt="Bill Preview" style="max-height: 220px; max-width: 100%; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);" />
                             </div>
                             <div v-else class="mb-2">
-                              <i class="i-File-Clipboard-File--Text text-danger" style="font-size: 48px;"></i>
+                              <i class="i-File-Clipboard-File--Text text-danger" style="font-size: 56px;"></i>
                             </div>
                             <div class="font-weight-bold text-dark">{{ aiScan.file ? aiScan.file.name : '' }}</div>
                             <small class="text-muted d-block mb-2">{{ formatFileSize(aiScan.file ? aiScan.file.size : 0) }}</small>
@@ -115,59 +115,37 @@
                         </b-form-group>
                       </b-col>
 
-                      <!-- Right: AI Settings & Instructions -->
-                      <b-col md="5" sm="12" class="p-3">
-                        <h6 class="font-weight-bold text-primary mb-2">2. AI Engine Configuration</h6>
+                      <!-- Right: Instructions & Scan Action -->
+                      <b-col md="5" sm="12" class="pl-md-4 d-flex flex-column justify-content-between">
+                        <div>
+                          <h6 class="font-weight-bold text-primary mb-3">2. How AI Scanning Works</h6>
 
-                        <!-- Key Status Alert -->
-                        <b-alert show variant="success" v-if="aiScan.configured && !aiScan.showKeyInput" class="small mb-3">
-                          <i class="i-Yes mr-1"></i> AI Engine Ready (Google Gemini API configured)
-                          <a href="javascript:void(0)" class="float-right font-weight-bold" @click="aiScan.showKeyInput = true">Change Key</a>
-                        </b-alert>
+                          <!-- Clean Notes Box (NO gray background) -->
+                          <div class="p-3 rounded mb-4" style="border: 1px solid #e2e8f0; background: #ffffff;">
+                            <div class="font-weight-bold text-dark mb-2">💡 Tips for best results:</div>
+                            <ul class="pl-3 mb-0 text-muted" style="font-size: 13px; line-height: 1.8;">
+                              <li>Make sure the bill or invoice photo is clear and well-lit.</li>
+                              <li>Invoice number, date, vendor name, and line items will be extracted automatically.</li>
+                              <li>Existing products & suppliers will be matched with your inventory.</li>
+                              <li>You can review, edit quantities/prices, or add new products with 1 click!</li>
+                            </ul>
+                          </div>
 
-                        <b-alert show variant="warning" v-else class="small mb-3">
-                          <i class="i-Information mr-1"></i> Google Gemini API Key required for scanning.
-                        </b-alert>
-
-                        <!-- API Key Input Field (shown if not configured or if clicked Change) -->
-                        <div v-if="!aiScan.configured || aiScan.showKeyInput" class="mb-3 p-3 bg-light rounded">
-                          <label class="font-weight-bold small mb-1">Google Gemini API Key:</label>
-                          <b-input-group size="sm">
-                            <b-form-input
-                              v-model="aiScan.apiKey"
-                              type="password"
-                              placeholder="Paste your Gemini API key (AIzaSy...)"
-                            />
-                          </b-input-group>
-                          <div class="mt-2 d-flex align-items-center justify-content-between">
-                            <b-form-checkbox v-model="aiScan.saveKey" size="sm">
-                              Save key in system
-                            </b-form-checkbox>
-                            <a href="https://aistudio.google.com/app/apikey" target="_blank" class="small text-primary font-weight-bold">
-                              Get Free Key ↗
-                            </a>
+                          <div class="d-flex align-items-center text-success mb-2" style="font-size: 13px;">
+                            <i class="i-Yes mr-2 font-weight-bold"></i> Powered by Google Gemini AI
                           </div>
                         </div>
 
-                        <div class="p-3 bg-light rounded mb-3">
-                          <div class="font-weight-bold small text-dark mb-1">💡 Tips for best scanning results:</div>
-                          <ul class="pl-3 mb-0 small text-muted">
-                            <li>Make sure bill image is well-lit and text is legible.</li>
-                            <li>Invoice numbers, item names, and line prices will be extracted automatically.</li>
-                            <li>Existing products & suppliers will be auto-matched.</li>
-                            <li>You can review and edit every single field before final submission!</li>
-                          </ul>
-                        </div>
-
                         <!-- Start Scan Button -->
-                        <div class="mt-4">
+                        <div class="mt-3">
                           <b-button
                             type="button"
                             variant="primary"
                             block
                             size="lg"
-                            class="font-weight-bold shadow"
-                            :disabled="!aiScan.file || aiScan.loading || (!aiScan.configured && !aiScan.apiKey)"
+                            class="font-weight-bold shadow py-3"
+                            style="font-size: 16px; border-radius: 10px;"
+                            :disabled="!aiScan.file || aiScan.loading"
                             @click="triggerAiScan"
                           >
                             <span v-if="aiScan.loading">
@@ -184,7 +162,7 @@
                   </div>
 
                   <!-- Step 2: Extracted Results Review Panel -->
-                  <div v-else>
+                  <div v-else class="p-2">
                     <b-row>
                       <!-- Left: Bill Image / Document Preview -->
                       <b-col md="4" sm="12" class="border-right mb-3">
@@ -194,7 +172,7 @@
                             <i class="i-Upload"></i> Scan New
                           </b-button>
                         </div>
-                        <div class="text-center p-2 bg-light rounded" style="max-height: 480px; overflow-y: auto;">
+                        <div class="text-center p-2 rounded" style="max-height: 520px; overflow-y: auto; border: 1px solid #e2e8f0; background: #ffffff;">
                           <img
                             v-if="aiScan.result.bill_url && aiScan.fileType === 'image'"
                             :src="aiScan.result.bill_url"
@@ -211,8 +189,8 @@
 
                       <!-- Right: Extracted Data & Products Match Table -->
                       <b-col md="8" sm="12">
-                        <!-- Header Summary Row -->
-                        <div class="d-flex flex-wrap align-items-center justify-content-between mb-3 p-3 bg-light rounded">
+                        <!-- Header Summary Row (Clean, NO gray background) -->
+                        <div class="d-flex flex-wrap align-items-center justify-content-between mb-3 p-3 rounded" style="border: 1px solid #e2e8f0; background: #ffffff;">
                           <div class="mr-3 mb-2 mb-md-0">
                             <small class="text-muted d-block">Supplier:</small>
                             <div class="font-weight-bold text-dark d-flex align-items-center">
@@ -256,7 +234,7 @@
                         </div>
 
                         <!-- Items Table -->
-                        <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
+                        <div class="table-responsive" style="max-height: 360px; overflow-y: auto;">
                           <table class="table table-sm table-bordered table-hover">
                             <thead class="bg-gray-200">
                               <tr>
@@ -308,8 +286,8 @@
                           </table>
                         </div>
 
-                        <!-- Financials Summary / Footer -->
-                        <div class="d-flex align-items-center justify-content-between p-3 bg-light rounded mt-3">
+                        <!-- Financials Summary / Footer (Clean, NO gray background) -->
+                        <div class="d-flex align-items-center justify-content-between p-3 rounded mt-3" style="border-top: 1px solid #e2e8f0; background: #ffffff;">
                           <div>
                             <span class="text-muted mr-3">Discount: <strong>{{ (aiScan.result.financials.discount || 0).toFixed(2) }}</strong></span>
                             <span class="text-muted mr-3">Tax: <strong>{{ (aiScan.result.financials.tax_amount || 0).toFixed(2) }}</strong></span>
@@ -1961,16 +1939,6 @@ export default {
     // ==========================================
     openAiScanModal() {
       this.$bvModal.show('ai_bill_scan_modal');
-
-      // Check config status safely without triggering 404 router redirects
-      axios.get('purchase-ai/config', { meta: { skipAuthRedirect: true } }).then(({ data }) => {
-        this.aiScan.configured = !!data.configured;
-        this.aiScan.provider = data.provider || 'gemini';
-        this.aiScan.showKeyInput = !data.configured;
-      }).catch(() => {
-        this.aiScan.configured = false;
-        this.aiScan.showKeyInput = true;
-      });
     },
 
     onAiFileSelected(e) {
@@ -2007,12 +1975,6 @@ export default {
 
       const formData = new FormData();
       formData.append('bill_file', this.aiScan.file);
-      if (this.aiScan.apiKey) {
-        formData.append('api_key', this.aiScan.apiKey);
-        if (this.aiScan.saveKey) {
-          formData.append('save_key', '1');
-        }
-      }
       if (this.purchase.warehouse_id) {
         formData.append('warehouse_id', this.purchase.warehouse_id);
       }
@@ -2350,5 +2312,31 @@ export default {
     border-bottom-left-radius: 0;
     white-space: nowrap;
     height: calc(1.5em + 0.7rem + 0px) !important;
+  }
+
+  /* AI Bill Scanner Wide Modal */
+  .ai-bill-modal-wide {
+    max-width: 95vw !important;
+    width: 1350px !important;
+  }
+  @media (min-width: 1400px) {
+    .ai-bill-modal-wide {
+      max-width: 90vw !important;
+      width: 1400px !important;
+    }
+  }
+  .ai-bill-modal-wide .modal-content {
+    border: none;
+    border-radius: 16px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  }
+  .ai-bill-modal-wide .modal-header {
+    border-bottom: 1px solid #edf2f7;
+    padding: 1.25rem 1.5rem;
+    background: #ffffff;
+  }
+  .ai-bill-modal-wide .modal-body {
+    padding: 1.5rem;
+    background: #ffffff;
   }
 </style>
