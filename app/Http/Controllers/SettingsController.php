@@ -184,6 +184,10 @@ class SettingsController extends Controller
             'backup_keep_local' => ($request['backup_keep_local'] == '1' || $request['backup_keep_local'] == 'true' || $request['backup_keep_local'] === 1 || $request['backup_keep_local'] === true) ? 1 : 0,
             'backup_cloud_provider' => $request['backup_cloud_provider'] ?? null,
             'backup_cloud_path' => $request['backup_cloud_path'] ?? null,
+            // AI Bill Scanner settings
+            'gemini_api_key' => $request->has('gemini_api_key') ? $request['gemini_api_key'] : ($setting->gemini_api_key ?? null),
+            'openai_api_key' => $request->has('openai_api_key') ? $request['openai_api_key'] : ($setting->openai_api_key ?? null),
+            'ai_provider' => $request->has('ai_provider') ? $request['ai_provider'] : ($setting->ai_provider ?? 'gemini'),
             // S3-compatible settings
             'backup_s3_bucket' => $request['backup_s3_bucket'] ?? null,
             'backup_s3_region' => $request['backup_s3_region'] ?? null,
@@ -657,6 +661,10 @@ class SettingsController extends Controller
             $item['date_format'] = $settings->date_format ?? 'YYYY-MM-DD';
             // Optional price format for frontend display (used by POS)
             $item['price_format'] = $settings->price_format;
+            // AI Bill Scanner
+            $item['gemini_api_key'] = $settings->gemini_api_key ?? '';
+            $item['openai_api_key'] = $settings->openai_api_key ?? '';
+            $item['ai_provider'] = $settings->ai_provider ?? 'gemini';
             // Cloud backup settings
             $item['backup_cloud_enabled'] = (bool) ($settings->backup_cloud_enabled ?? false);
             $item['backup_keep_local'] = (bool) ($settings->backup_keep_local ?? true);
@@ -864,6 +872,10 @@ class SettingsController extends Controller
             $item['date_format'] = $settings->date_format ?? 'YYYY-MM-DD';
             // Optional price format for frontend display (used by POS)
             $item['price_format'] = $settings->price_format;
+            // AI Bill Scanner
+            $item['gemini_api_key'] = $settings->gemini_api_key ?? '';
+            $item['openai_api_key'] = $settings->openai_api_key ?? '';
+            $item['ai_provider'] = $settings->ai_provider ?? 'gemini';
             // Cloud backup settings
             $item['backup_cloud_enabled'] = (bool) ($settings->backup_cloud_enabled ?? false);
             $item['backup_keep_local'] = (bool) ($settings->backup_keep_local ?? true);

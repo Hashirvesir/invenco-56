@@ -662,6 +662,13 @@ Route::middleware(['auth:api', 'Is_Active', 'request.safety', 'token.timeout'])-
     Route::post('preview_import_purchases', 'PurchasesController@preview_import_purchases');
     Route::post('store_import_purchases', 'PurchasesController@store_import_purchases');
     
+    // ------------------------------- AI Bill Scanner --------------------------\\
+    Route::post('purchases/ai-scan-bill', 'PurchaseAiScanController@scan');
+    Route::get('purchases/ai-scan-config', 'PurchaseAiScanController@getAiConfig');
+    Route::post('purchases/ai-save-key', 'PurchaseAiScanController@saveAiKey');
+    Route::post('purchases/ai-quick-create-product', 'PurchaseAiScanController@quickCreateProduct');
+    Route::post('purchases/ai-quick-create-supplier', 'PurchaseAiScanController@quickCreateSupplier');
+    
     // ------------------------------- Purchase Documents --------------------------\\
     Route::get('purchases/{id}/documents', 'PurchasesController@getDocuments');
     Route::post('purchases/{id}/documents', 'PurchasesController@uploadDocuments');

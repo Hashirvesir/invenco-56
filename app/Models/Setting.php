@@ -26,6 +26,8 @@ class Setting extends Model
         'backup_dropbox_path', 'backup_dropbox_access_token',
         'google_calendar_refresh_token', 'google_calendar_calendar_id', 'timezone',
         'google_calendar_client_id', 'google_calendar_client_secret', 'google_calendar_redirect_uri',
+        // AI Bill Scanner settings
+        'gemini_api_key', 'openai_api_key', 'ai_provider',
     ];
 
     protected $casts = [

@@ -3,6 +3,31 @@
     <breadcumb :page="$t('AddPurchase')" :folder="$t('ListPurchases')"/>
     <div v-if="isLoading" class="loading_page spinner spinner-primary mr-3"></div>
 
+    <!-- AI Purchase Bill Scanner Banner -->
+    <b-card v-if="!isLoading" class="mb-3 border-0 shadow-sm text-white" style="background: linear-gradient(135deg, #4338ca 0%, #6366f1 50%, #8b5cf6 100%); border-radius: 12px;">
+      <div class="d-flex flex-wrap align-items-center justify-content-between p-1">
+        <div class="d-flex align-items-center mb-2 mb-md-0">
+          <div style="font-size: 26px; margin-right: 14px; background: rgba(255,255,255,0.22); width: 48px; height: 48px; border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+            <i class="i-Camera text-white"></i>
+          </div>
+          <div>
+            <h5 class="mb-1 text-white font-weight-bold d-flex align-items-center">
+              AI Purchase Bill Scanner
+              <span class="badge badge-warning text-dark ml-2 px-2 py-1" style="font-size: 10px; font-weight: bold; border-radius: 6px;">AI POWERED</span>
+            </h5>
+            <small style="opacity: 0.92; font-size: 13px;">
+              Upload supplier invoice image or PDF — AI will automatically extract items, costs, supplier & fill this form!
+            </small>
+          </div>
+        </div>
+        <div>
+          <b-button variant="light" class="btn-pill font-weight-bold shadow-sm px-3 py-2 text-primary" @click="openAiScanModal">
+            <i class="i-Scan-Barcode mr-1"></i> Scan Bill with AI
+          </b-button>
+        </div>
+      </div>
+    </b-card>
+
     <validation-observer ref="create_purchase" v-if="!isLoading">
       <b-form @submit.prevent="Submit_Purchase">
         <b-row>
@@ -17,6 +42,288 @@
                     style="width: 100%; height: calc(100vh - 56px);"
                     @result="onScan"
                   />
+                </b-modal>
+
+                <!-- Modal: AI Purchase Bill Scanner -->
+                <b-modal
+                  id="ai_bill_scan_modal"
+                  size="xl"
+                  hide-footer
+                  title="🤖 AI Purchase Bill Scanner"
+                  header-bg-variant="light"
+                >
+                  <!-- Step 1: Upload / Scanning Screen (when no results yet) -->
+                  <div v-if="!aiScan.result">
+                    <b-row>
+                      <!-- Left: Upload Box -->
+                      <b-col md="7" sm="12" class="border-right">
+                        <h6 class="font-weight-bold text-primary mb-2">1. Upload Supplier Bill / Invoice</h6>
+                        <p class="text-muted small mb-3">
+                          Supported formats: <strong>JPG, PNG, WEBP, PDF</strong> (up to 10MB). Mobile camera photos or scanned invoices work great!
+                        </p>
+
+                        <!-- Drag & Drop / File Input Zone -->
+                        <div
+                          class="ai-dropzone p-4 text-center mb-3"
+                          style="border: 2px dashed #6366f1; border-radius: 12px; background: #f8fafc; cursor: pointer; transition: all 0.2s;"
+                          @click="$refs.aiBillFileInput.click()"
+                        >
+                          <input
+                            type="file"
+                            ref="aiBillFileInput"
+                            class="d-none"
+                            accept="image/*,application/pdf"
+                            capture="environment"
+                            @change="onAiFileSelected"
+                          />
+
+                          <div v-if="!aiScan.filePreview && !aiScan.file">
+                            <div style="font-size: 42px; color: #6366f1;" class="mb-2">
+                              <i class="i-Upload"></i>
+                            </div>
+                            <h6 class="font-weight-bold mb-1">Click to browse or take a photo</h6>
+                            <small class="text-muted">Drag & drop your receipt / invoice file here</small>
+                          </div>
+
+                          <!-- Selected File Preview -->
+                          <div v-else class="text-center">
+                            <div v-if="aiScan.fileType === 'image'" class="mb-2">
+                              <img :src="aiScan.filePreview" alt="Bill Preview" style="max-height: 180px; max-width: 100%; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);" />
+                            </div>
+                            <div v-else class="mb-2">
+                              <i class="i-File-Clipboard-File--Text text-danger" style="font-size: 48px;"></i>
+                            </div>
+                            <div class="font-weight-bold text-dark">{{ aiScan.file ? aiScan.file.name : '' }}</div>
+                            <small class="text-muted d-block mb-2">{{ formatFileSize(aiScan.file ? aiScan.file.size : 0) }}</small>
+                            <b-button size="sm" variant="outline-danger" class="btn-pill" @click.stop="clearAiSelectedFile">
+                              Change File
+                            </b-button>
+                          </div>
+                        </div>
+
+                        <!-- Warehouse Check -->
+                        <b-form-group :label="$t('warehouse') + ' ' + '*'" class="mb-3">
+                          <v-select
+                            v-model="purchase.warehouse_id"
+                            :reduce="label => label.value"
+                            :placeholder="$t('Choose_Warehouse')"
+                            :options="warehouses.map(w => ({label: w.name, value: w.id}))"
+                          />
+                          <small class="text-muted" v-if="!purchase.warehouse_id">
+                            Please select the warehouse where stock will be added.
+                          </small>
+                        </b-form-group>
+                      </b-col>
+
+                      <!-- Right: AI Settings & Instructions -->
+                      <b-col md="5" sm="12" class="p-3">
+                        <h6 class="font-weight-bold text-primary mb-2">2. AI Engine Configuration</h6>
+
+                        <!-- Key Status Alert -->
+                        <b-alert show variant="success" v-if="aiScan.configured && !aiScan.showKeyInput" class="small mb-3">
+                          <i class="i-Yes mr-1"></i> AI Engine Ready (Google Gemini API configured)
+                          <a href="javascript:void(0)" class="float-right font-weight-bold" @click="aiScan.showKeyInput = true">Change Key</a>
+                        </b-alert>
+
+                        <b-alert show variant="warning" v-else class="small mb-3">
+                          <i class="i-Information mr-1"></i> Google Gemini API Key required for scanning.
+                        </b-alert>
+
+                        <!-- API Key Input Field (shown if not configured or if clicked Change) -->
+                        <div v-if="!aiScan.configured || aiScan.showKeyInput" class="mb-3 p-3 bg-light rounded">
+                          <label class="font-weight-bold small mb-1">Google Gemini API Key:</label>
+                          <b-input-group size="sm">
+                            <b-form-input
+                              v-model="aiScan.apiKey"
+                              type="password"
+                              placeholder="Paste your Gemini API key (AIzaSy...)"
+                            />
+                          </b-input-group>
+                          <div class="mt-2 d-flex align-items-center justify-content-between">
+                            <b-form-checkbox v-model="aiScan.saveKey" size="sm">
+                              Save key in system
+                            </b-form-checkbox>
+                            <a href="https://aistudio.google.com/app/apikey" target="_blank" class="small text-primary font-weight-bold">
+                              Get Free Key ↗
+                            </a>
+                          </div>
+                        </div>
+
+                        <div class="p-3 bg-light rounded mb-3">
+                          <div class="font-weight-bold small text-dark mb-1">💡 Tips for best scanning results:</div>
+                          <ul class="pl-3 mb-0 small text-muted">
+                            <li>Make sure bill image is well-lit and text is legible.</li>
+                            <li>Invoice numbers, item names, and line prices will be extracted automatically.</li>
+                            <li>Existing products & suppliers will be auto-matched.</li>
+                            <li>You can review and edit every single field before final submission!</li>
+                          </ul>
+                        </div>
+
+                        <!-- Start Scan Button -->
+                        <div class="mt-4">
+                          <b-button
+                            variant="primary"
+                            block
+                            size="lg"
+                            class="font-weight-bold shadow"
+                            :disabled="!aiScan.file || aiScan.loading || (!aiScan.configured && !aiScan.apiKey)"
+                            @click="triggerAiScan"
+                          >
+                            <span v-if="aiScan.loading">
+                              <span class="spinner-border spinner-border-sm mr-2" role="status"></span>
+                              AI is analyzing bill...
+                            </span>
+                            <span v-else>
+                              <i class="i-Flash mr-1"></i> Start AI Scan
+                            </span>
+                          </b-button>
+                        </div>
+                      </b-col>
+                    </b-row>
+                  </div>
+
+                  <!-- Step 2: Extracted Results Review Panel -->
+                  <div v-else>
+                    <b-row>
+                      <!-- Left: Bill Image / Document Preview -->
+                      <b-col md="4" sm="12" class="border-right mb-3">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                          <h6 class="font-weight-bold mb-0 text-primary">Original Bill Preview</h6>
+                          <b-button size="sm" variant="outline-primary" @click="resetAiScanner">
+                            <i class="i-Upload"></i> Scan New
+                          </b-button>
+                        </div>
+                        <div class="text-center p-2 bg-light rounded" style="max-height: 480px; overflow-y: auto;">
+                          <img
+                            v-if="aiScan.result.bill_url && aiScan.fileType === 'image'"
+                            :src="aiScan.result.bill_url"
+                            alt="Bill Image"
+                            style="width: 100%; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);"
+                          />
+                          <div v-else class="p-4 text-center text-muted">
+                            <i class="i-File-Clipboard-File--Text text-danger" style="font-size: 56px;"></i>
+                            <div class="mt-2 font-weight-bold">{{ aiScan.result.filename }}</div>
+                            <a :href="aiScan.result.bill_url" target="_blank" class="btn btn-sm btn-outline-primary mt-2">Open Document ↗</a>
+                          </div>
+                        </div>
+                      </b-col>
+
+                      <!-- Right: Extracted Data & Products Match Table -->
+                      <b-col md="8" sm="12">
+                        <!-- Header Summary Row -->
+                        <div class="d-flex flex-wrap align-items-center justify-content-between mb-3 p-3 bg-light rounded">
+                          <div class="mr-3 mb-2 mb-md-0">
+                            <small class="text-muted d-block">Supplier:</small>
+                            <div class="font-weight-bold text-dark d-flex align-items-center">
+                              {{ aiScan.result.supplier.name }}
+                              <span v-if="aiScan.result.supplier.matched" class="badge badge-success ml-2">Matched</span>
+                              <span v-else class="badge badge-warning text-dark ml-2">New Supplier</span>
+                            </div>
+                            <div v-if="!aiScan.result.supplier.matched" class="mt-1">
+                              <b-button size="sm" variant="outline-primary" class="py-0 px-2" style="font-size: 11px;" @click="quickCreateSupplierFromAi">
+                                + Quick Add Supplier
+                              </b-button>
+                            </div>
+                          </div>
+
+                          <div class="mr-3 mb-2 mb-md-0">
+                            <small class="text-muted d-block">Bill No / Ref:</small>
+                            <strong class="text-dark">{{ aiScan.result.invoice.ref || '---' }}</strong>
+                          </div>
+
+                          <div class="mr-3 mb-2 mb-md-0">
+                            <small class="text-muted d-block">Bill Date:</small>
+                            <strong class="text-dark">{{ aiScan.result.invoice.date || '---' }}</strong>
+                          </div>
+
+                          <div>
+                            <small class="text-muted d-block">Total Amount:</small>
+                            <strong class="text-success h6 mb-0">{{ currentUser.currency }} {{ (aiScan.result.financials.grand_total || 0).toFixed(2) }}</strong>
+                          </div>
+                        </div>
+
+                        <!-- Items Table Header -->
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                          <h6 class="font-weight-bold mb-0 text-primary">
+                            Extracted Products ({{ aiScan.result.items.length }} items)
+                          </h6>
+                          <div v-if="hasUnmatchedAiItems">
+                            <b-button size="sm" variant="warning" class="text-dark font-weight-bold py-1 px-2" style="font-size: 12px;" @click="quickCreateAllUnmatchedProducts">
+                              <i class="i-Add"></i> Create All {{ unmatchedAiItemsCount }} New Products
+                            </b-button>
+                          </div>
+                        </div>
+
+                        <!-- Items Table -->
+                        <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
+                          <table class="table table-sm table-bordered table-hover">
+                            <thead class="bg-gray-200">
+                              <tr>
+                                <th>Item Description</th>
+                                <th>Code / Barcode</th>
+                                <th style="width: 80px;">Qty</th>
+                                <th style="width: 100px;">Unit Cost</th>
+                                <th style="width: 100px;">Subtotal</th>
+                                <th>Status</th>
+                                <th style="width: 40px;"></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="(item, idx) in aiScan.result.items" :key="'ai-item-' + idx">
+                                <td>
+                                  <div class="font-weight-bold">{{ item.name }}</div>
+                                  <small class="text-muted" v-if="item.matched && item.extracted_name && item.extracted_name !== item.name">
+                                    Receipt: {{ item.extracted_name }}
+                                  </small>
+                                </td>
+                                <td>
+                                  <small class="badge badge-light">{{ item.code || '---' }}</small>
+                                </td>
+                                <td>
+                                  <b-form-input size="sm" type="number" v-model.number="item.quantity" min="0.01" step="any" @input="recalcAiItem(item)" />
+                                </td>
+                                <td>
+                                  <b-form-input size="sm" type="number" v-model.number="item.cost" min="0" step="any" @input="recalcAiItem(item)" />
+                                </td>
+                                <td class="font-weight-bold text-dark">
+                                  {{ (item.subtotal || 0).toFixed(2) }}
+                                </td>
+                                <td>
+                                  <span v-if="item.matched" class="badge badge-success">
+                                    <i class="i-Yes"></i> Matched
+                                  </span>
+                                  <div v-else>
+                                    <span class="badge badge-warning text-dark mb-1">New Product</span>
+                                    <b-button size="sm" variant="outline-primary" class="py-0 px-1 d-block" style="font-size: 11px;" @click="quickCreateProductFromAi(item, idx)">
+                                      + Create
+                                    </b-button>
+                                  </div>
+                                </td>
+                                <td class="text-center">
+                                  <i class="i-Close-Window text-danger cursor-pointer" title="Remove" @click="removeAiItem(idx)"></i>
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <!-- Financials Summary / Footer -->
+                        <div class="d-flex align-items-center justify-content-between p-3 bg-light rounded mt-3">
+                          <div>
+                            <span class="text-muted mr-3">Discount: <strong>{{ (aiScan.result.financials.discount || 0).toFixed(2) }}</strong></span>
+                            <span class="text-muted mr-3">Tax: <strong>{{ (aiScan.result.financials.tax_amount || 0).toFixed(2) }}</strong></span>
+                            <span class="text-muted">Grand Total: <strong class="text-success">{{ currentUser.currency }} {{ (aiScan.result.financials.grand_total || 0).toFixed(2) }}</strong></span>
+                          </div>
+                          <div>
+                            <b-button variant="secondary" class="mr-2 btn-pill" @click="$bvModal.hide('ai_bill_scan_modal')">Cancel</b-button>
+                            <b-button variant="success" class="btn-pill font-weight-bold px-4 shadow" @click="applyAiResultsToPurchase">
+                              <i class="i-Check mr-1"></i> Apply to Purchase Form
+                            </b-button>
+                          </div>
+                        </div>
+                      </b-col>
+                    </b-row>
+                  </div>
                 </b-modal>
 
                 <!-- Quick Add Supplier Modal -->
@@ -873,6 +1180,19 @@ export default {
       isLoading: true,
       SubmitProcessing:false,
       Submit_Processing_detail:false,
+      // AI Bill Scanner
+      aiScan: {
+        loading: false,
+        configured: false,
+        provider: 'gemini',
+        apiKey: '',
+        saveKey: true,
+        showKeyInput: false,
+        file: null,
+        filePreview: null,
+        fileType: 'image',
+        result: null
+      },
       warehouses: [],
       suppliers: [],
       supplier: {
@@ -963,6 +1283,15 @@ export default {
         if (!Array.isArray(d.batches) || d.batches.length === 0) return true;
         return this.batchQtyMismatch(d);
       }) || null;
+    },
+
+    hasUnmatchedAiItems() {
+      if (!this.aiScan.result || !Array.isArray(this.aiScan.result.items)) return false;
+      return this.aiScan.result.items.some(i => !i.matched);
+    },
+    unmatchedAiItemsCount() {
+      if (!this.aiScan.result || !Array.isArray(this.aiScan.result.items)) return 0;
+      return this.aiScan.result.items.filter(i => !i.matched).length;
     }
   },
 
@@ -1624,6 +1953,323 @@ export default {
               this.makeToast("danger", this.$t("InvalidData"), this.$t("Failed"));
             });
         });
+    },
+
+    // ==========================================
+    // AI Bill Scanner Methods
+    // ==========================================
+    openAiScanModal() {
+      // Check config status
+      axios.get('purchases/ai-scan-config').then(({ data }) => {
+        this.aiScan.configured = !!data.configured;
+        this.aiScan.provider = data.provider || 'gemini';
+        this.aiScan.showKeyInput = !data.configured;
+      }).catch(() => {
+        this.aiScan.configured = false;
+        this.aiScan.showKeyInput = true;
+      });
+
+      this.$bvModal.show('ai_bill_scan_modal');
+    },
+
+    onAiFileSelected(e) {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+
+      this.aiScan.file = file;
+      this.aiScan.fileType = file.type === 'application/pdf' ? 'pdf' : 'image';
+
+      if (this.aiScan.fileType === 'image') {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          this.aiScan.filePreview = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      } else {
+        this.aiScan.filePreview = null;
+      }
+    },
+
+    clearAiSelectedFile() {
+      this.aiScan.file = null;
+      this.aiScan.filePreview = null;
+      if (this.$refs.aiBillFileInput) {
+        this.$refs.aiBillFileInput.value = '';
+      }
+    },
+
+    triggerAiScan() {
+      if (!this.aiScan.file) {
+        this.makeToast('warning', 'Please select a bill image or PDF to scan', 'AI Scanner');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('bill_file', this.aiScan.file);
+      if (this.aiScan.apiKey) {
+        formData.append('api_key', this.aiScan.apiKey);
+        if (this.aiScan.saveKey) {
+          formData.append('save_key', '1');
+        }
+      }
+      if (this.purchase.warehouse_id) {
+        formData.append('warehouse_id', this.purchase.warehouse_id);
+      }
+
+      this.aiScan.loading = true;
+      NProgress.start();
+
+      axios.post('purchases/ai-scan-bill', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      .then(({ data }) => {
+        this.aiScan.loading = false;
+        NProgress.done();
+
+        if (data.success) {
+          this.aiScan.result = data;
+          this.aiScan.configured = true;
+          this.aiScan.showKeyInput = false;
+
+          // If supplier was matched, also select it
+          if (data.supplier && data.supplier.id) {
+            this.purchase.supplier_id = data.supplier.id;
+          }
+
+          this.makeToast(
+            'success',
+            `Bill scanned successfully! Found ${data.items ? data.items.length : 0} items.`,
+            'AI Scanner'
+          );
+        } else {
+          this.makeToast('danger', data.message || 'Failed to scan bill', 'AI Scanner Error');
+        }
+      })
+      .catch((error) => {
+        this.aiScan.loading = false;
+        NProgress.done();
+        const msg = (error.response && error.response.data && error.response.data.message)
+          || error.message
+          || 'Failed to scan bill';
+        this.makeToast('danger', msg, 'AI Scanner Error');
+      });
+    },
+
+    recalcAiItem(item) {
+      item.subtotal = (Number(item.quantity) || 0) * (Number(item.cost) || 0);
+      if (this.aiScan.result && this.aiScan.result.financials) {
+        const sum = this.aiScan.result.items.reduce((s, i) => s + (Number(i.subtotal) || 0), 0);
+        this.aiScan.result.financials.subtotal = sum;
+        this.aiScan.result.financials.grand_total = sum - (this.aiScan.result.financials.discount || 0) + (this.aiScan.result.financials.tax_amount || 0);
+      }
+    },
+
+    removeAiItem(index) {
+      if (this.aiScan.result && this.aiScan.result.items) {
+        this.aiScan.result.items.splice(index, 1);
+        if (this.aiScan.result.financials) {
+          const sum = this.aiScan.result.items.reduce((s, i) => s + (Number(i.subtotal) || 0), 0);
+          this.aiScan.result.financials.subtotal = sum;
+          this.aiScan.result.financials.grand_total = sum - (this.aiScan.result.financials.discount || 0) + (this.aiScan.result.financials.tax_amount || 0);
+        }
+      }
+    },
+
+    quickCreateProductFromAi(item, index) {
+      NProgress.start();
+      axios.post('purchases/ai-quick-create-product', {
+        name: item.name,
+        cost: item.cost,
+        code: item.code || '',
+        warehouse_id: this.purchase.warehouse_id || null
+      })
+      .then(({ data }) => {
+        NProgress.done();
+        if (data.success && data.product) {
+          item.product_id = data.product.id;
+          item.code = data.product.code;
+          item.unitPurchase = data.product.unitPurchase || 'pc';
+          item.purchase_unit_id = data.product.purchase_unit_id || 1;
+          item.matched = true;
+          item.is_new = false;
+          this.makeToast('success', `Product "${data.product.name}" created!`, 'Success');
+        }
+      })
+      .catch((err) => {
+        NProgress.done();
+        this.makeToast('danger', 'Failed to create product', 'Error');
+      });
+    },
+
+    async quickCreateAllUnmatchedProducts() {
+      if (!this.aiScan.result || !this.aiScan.result.items) return;
+      const unmatched = this.aiScan.result.items.filter(i => !i.matched);
+      if (unmatched.length === 0) return;
+
+      NProgress.start();
+      let created = 0;
+      for (const item of unmatched) {
+        try {
+          const { data } = await axios.post('purchases/ai-quick-create-product', {
+            name: item.name,
+            cost: item.cost,
+            code: item.code || '',
+            warehouse_id: this.purchase.warehouse_id || null
+          });
+          if (data.success && data.product) {
+            item.product_id = data.product.id;
+            item.code = data.product.code;
+            item.unitPurchase = data.product.unitPurchase || 'pc';
+            item.purchase_unit_id = data.product.purchase_unit_id || 1;
+            item.matched = true;
+            item.is_new = false;
+            created++;
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+      NProgress.done();
+      this.makeToast('success', `Created ${created} new products!`, 'Success');
+    },
+
+    quickCreateSupplierFromAi() {
+      if (!this.aiScan.result || !this.aiScan.result.supplier) return;
+      const s = this.aiScan.result.supplier;
+
+      NProgress.start();
+      axios.post('purchases/ai-quick-create-supplier', {
+        name: s.name,
+        phone: s.phone,
+        tax_number: s.tax_number,
+        adresse: s.address
+      })
+      .then(({ data }) => {
+        NProgress.done();
+        if (data.success && data.supplier) {
+          s.id = data.supplier.id;
+          s.matched = true;
+          s.is_new = false;
+          this.suppliers.push({ id: data.supplier.id, name: data.supplier.name, value: data.supplier.id });
+          this.purchase.supplier_id = data.supplier.id;
+          this.makeToast('success', `Supplier "${data.supplier.name}" created and selected!`, 'Success');
+        }
+      })
+      .catch(() => {
+        NProgress.done();
+        this.makeToast('danger', 'Failed to create supplier', 'Error');
+      });
+    },
+
+    applyAiResultsToPurchase() {
+      if (!this.aiScan.result) return;
+      const res = this.aiScan.result;
+
+      // 1. Supplier
+      if (res.supplier && res.supplier.id) {
+        this.purchase.supplier_id = res.supplier.id;
+      }
+
+      // 2. Invoice Date & Supplier Bill details
+      if (res.invoice) {
+        if (res.invoice.date) {
+          this.purchase.date = res.invoice.date;
+          this.purchase.supplier_bill_date = res.invoice.date;
+        }
+        if (res.invoice.ref) {
+          this.purchase.supplier_bill_no = res.invoice.ref;
+        }
+      }
+
+      // 3. Discount, Tax, Shipping, Notes
+      if (res.financials) {
+        if (res.financials.discount > 0) {
+          this.purchase.discount = Number(res.financials.discount);
+        }
+        if (res.financials.tax_rate > 0) {
+          this.purchase.tax_rate = Number(res.financials.tax_rate);
+        }
+        if (res.financials.shipping > 0) {
+          this.purchase.shipping = Number(res.financials.shipping);
+        }
+        if (res.financials.notes) {
+          this.purchase.notes = this.purchase.notes
+            ? `${this.purchase.notes}\n${res.financials.notes}`
+            : res.financials.notes;
+        }
+      }
+
+      // 4. Items
+      const items = res.items || [];
+      let added = 0;
+
+      items.forEach(item => {
+        if (item.product_id) {
+          const existing = this.details.find(d => d.product_id === item.product_id);
+          if (existing) {
+            existing.quantity = (Number(existing.quantity) || 0) + (Number(item.quantity) || 1);
+            existing.cost = Number(item.cost) || existing.cost;
+            existing.Unit_cost = Number(item.cost) || existing.Unit_cost;
+            existing.Net_cost = Number(item.cost) || existing.Net_cost;
+          } else {
+            const detail_id = this.details.length > 0
+              ? Math.max(...this.details.map(d => d.detail_id)) + 1
+              : 1;
+
+            this.details.push({
+              detail_id,
+              product_id: item.product_id,
+              product_variant_id: item.product_variant_id || null,
+              name: item.name,
+              code: item.code || '',
+              quantity: Number(item.quantity) || 1,
+              cost: Number(item.cost) || 0,
+              Unit_cost: Number(item.cost) || 0,
+              Net_cost: Number(item.cost) || 0,
+              fix_cost: Number(item.cost) || 0,
+              discount: Number(item.discount) || 0,
+              DiscountNet: Number(item.discount) || 0,
+              discount_Method: '2',
+              tax_percent: Number(item.tax_percent) || 0,
+              taxe: 0,
+              tax_method: '1',
+              unitPurchase: item.unitPurchase || 'pc',
+              purchase_unit_id: item.purchase_unit_id || 1,
+              stock: 0,
+              subtotal: Number(item.subtotal) || ((Number(item.quantity) || 1) * (Number(item.cost) || 0)),
+              is_batch_tracked: false,
+              batches: []
+            });
+            added++;
+          }
+        }
+      });
+
+      this.Calcul_Total();
+      this.$bvModal.hide('ai_bill_scan_modal');
+
+      this.makeToast(
+        'success',
+        `Successfully applied bill data! ${added} item(s) added to purchase form.`,
+        'AI Scanner'
+      );
+    },
+
+    resetAiScanner() {
+      this.aiScan.result = null;
+      this.aiScan.file = null;
+      this.aiScan.filePreview = null;
+      if (this.$refs.aiBillFileInput) {
+        this.$refs.aiBillFileInput.value = '';
+      }
+    },
+
+    formatFileSize(bytes) {
+      if (!bytes) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     },
 
     //---------------------------------------Get Elements Purchase ------------------------------\\
