@@ -178,7 +178,7 @@ class PurchaseAiScanController extends Controller
         try {
             $result = $service->scanBill($file, $customKey, $warehouseId);
             return response()->json($result);
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('AI Bill Scan Error: ' . $e->getMessage(), [
                 'trace' => $e->getTraceAsString(),
             ]);

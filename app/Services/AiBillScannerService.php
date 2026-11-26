@@ -416,34 +416,40 @@ PROMPT;
     {
         $text = '';
 
-        if (preg_match_all('/stream[\r\n]+(.*?)[\r\n]+endstream/s', $content, $matches)) {
-            foreach ($matches[1] as $stream) {
-                $decompressed = @gzuncompress($stream);
-                $data = ($decompressed !== false) ? $decompressed : $stream;
+        try {
+            if (preg_match_all('/stream[\r\n]+(.*?)[\r\n]+endstream/s', $content, $matches)) {
+                foreach ($matches[1] as $stream) {
+                    $decompressed = @gzuncompress($stream);
+                    $data = ($decompressed !== false) ? $decompressed : $stream;
 
-                if (preg_match_all('/\((.*?)\)\s*T[jJ]/s', $data, $textMatches)) {
-                    foreach ($textMatches[1] as $tm) {
-                        $cleaned = preg_replace('/\\\([()\\\\])/', '$1', $tm);
-                        $text .= ' ' . $cleaned;
-                    }
-                    $text .= "\n";
-                } elseif (preg_match_all('/\[(.*?)\]\s*TJ/s', $data, $tjMatches)) {
-                    foreach ($tjMatches[1] as $arrayContent) {
-                        if (preg_match_all('/\((.*?)\)/s', $arrayContent, $subMatches)) {
-                            foreach ($subMatches[1] as $sm) {
-                                $cleaned = preg_replace('/\\\([()\\\\])/', '$1', $sm);
-                                $text .= $cleaned;
-                            }
-                            $text .= ' ';
+                    if (preg_match_all('/\((.*?)\)\s*T[jJ]/s', $data, $textMatches)) {
+                        foreach ($textMatches[1] as $tm) {
+                            $cleaned = preg_replace('/\\\([()\\\\])/', '$1', $tm);
+                            $text .= ' ' . $cleaned;
                         }
+                        $text .= "\n";
+                    } elseif (preg_match_all('/\[(.*?)\]\s*TJ/s', $data, $tjMatches)) {
+                        foreach ($tjMatches[1] as $arrayContent) {
+                            if (preg_match_all('/\((.*?)\)/s', $arrayContent, $subMatches)) {
+                                foreach ($subMatches[1] as $sm) {
+                                    $cleaned = preg_replace('/\\\([()\\\\])/', '$1', $sm);
+                                    $text .= $cleaned;
+                                }
+                                $text .= ' ';
+                            }
+                        }
+                        $text .= "\n";
                     }
-                    $text .= "\n";
                 }
             }
-        }
 
-        $text = preg_replace('/[ \t]+/', ' ', $text);
-        $text = preg_replace('/[\r\n]{2,}/', "\n", $text);
+            // Remove non-printable control characters
+            $text = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', ' ', $text);
+            $text = preg_replace('/[ \t]+/', ' ', $text);
+            $text = preg_replace('/[\r\n]{2,}/', "\n", $text);
+        } catch (\Throwable $e) {
+            // Fallback
+        }
 
         return trim($text);
     }
@@ -570,19 +576,22 @@ PROMPT;
     }
 
     /**
-     * Clean JSON string from potential markdown code fences.
+     * Clean JSON string from potential markdown code fences and surrounding text.
      */
     protected function cleanJsonString(string $text): string
     {
         $text = trim($text);
-        if (str_starts_with($text, '```json')) {
-            $text = substr($text, 7);
-        } elseif (str_starts_with($text, '```')) {
-            $text = substr($text, 3);
+
+        if (preg_match('/```(?:json)?\s*([\s\S]*?)\s*```/', $text, $matches)) {
+            $text = trim($matches[1]);
         }
-        if (str_ends_with($text, '```')) {
-            $text = substr($text, 0, -3);
+
+        $firstBrace = strpos($text, '{');
+        $lastBrace = strrpos($text, '}');
+        if ($firstBrace !== false && $lastBrace !== false && $lastBrace > $firstBrace) {
+            $text = substr($text, $firstBrace, $lastBrace - $firstBrace + 1);
         }
+
         return trim($text);
     }
 

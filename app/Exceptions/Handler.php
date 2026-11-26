@@ -80,6 +80,15 @@ class Handler extends ExceptionHandler
 
     public function render($request, Throwable $exception)
     {
+        if ($exception instanceof \Illuminate\Contracts\Encryption\DecryptException) {
+            if ($request->expectsJson() || $request->is('api/*')) {
+                return response()->json([
+                    'message' => 'Session expired or invalid token. Please refresh your page.',
+                    'status' => 401,
+                ], 401);
+            }
+        }
+
         if ($exception instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
             return response()->json([
                 'message' => 'Not found',
