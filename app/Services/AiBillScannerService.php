@@ -113,16 +113,65 @@ class AiBillScannerService
 
         // 1. Store the uploaded bill image in public folder for preview and archiving
         $destinationPath = public_path('images/purchases_bills');
-        if (! File::isDirectory($destinationPath)) {
-            File::makeDirectory($destinationPath, 0755, true, true);
-        }
-
         $extension = strtolower($file->getClientOriginalExtension());
         $filename = 'bill_' . time() . '_' . uniqid() . '.' . $extension;
-        $file->move($destinationPath, $filename);
+        $savedFilePath = '';
+        $billUrl = '';
 
-        $savedFilePath = $destinationPath . DIRECTORY_SEPARATOR . $filename;
-        $billUrl = '/images/purchases_bills/' . $filename;
+        try {
+            if (! File::isDirectory($destinationPath)) {
+                @File::makeDirectory($destinationPath, 0777, true, true);
+            }
+            @chmod($destinationPath, 0777);
+
+            if (is_writable($destinationPath)) {
+                $file->move($destinationPath, $filename);
+                $savedFilePath = $destinationPath . DIRECTORY_SEPARATOR . $filename;
+                $billUrl = '/images/purchases_bills/' . $filename;
+                @chmod($savedFilePath, 0666);
+            } else {
+                throw new Exception("Directory {$destinationPath} is not writable by web server.");
+            }
+        } catch (\Throwable $moveEx) {
+            Log::warning("AI Scanner: Failed to save bill to {$destinationPath}: " . $moveEx->getMessage() . ". Trying fallback directories.");
+
+            // Fallback for Linux servers when public/images is permission restricted
+            $fallbackDirs = [
+                storage_path('app/public/purchases_bills'),
+                storage_path('framework/temp'),
+                sys_get_temp_dir(),
+            ];
+
+            $saved = false;
+            foreach ($fallbackDirs as $fDir) {
+                try {
+                    if (! File::isDirectory($fDir)) {
+                        @File::makeDirectory($fDir, 0777, true, true);
+                    }
+                    @chmod($fDir, 0777);
+                    $file->move($fDir, $filename);
+                    $savedFilePath = $fDir . DIRECTORY_SEPARATOR . $filename;
+                    $billUrl = '';
+                    $saved = true;
+                    break;
+                } catch (\Throwable $e) {
+                    continue;
+                }
+            }
+
+            if (! $saved) {
+                // If moving failed everywhere, copy from uploaded temp file path
+                $realPath = $file->getRealPath() ?: $file->getPathname();
+                $tempTarget = sys_get_temp_dir() . DIRECTORY_SEPARATOR . $filename;
+                if ($realPath && @copy($realPath, $tempTarget)) {
+                    $savedFilePath = $tempTarget;
+                } elseif ($realPath && file_exists($realPath)) {
+                    $savedFilePath = $realPath;
+                } else {
+                    throw new Exception("Server file permission error: Server par 'public/images/purchases_bills' directory me file save karne ki permission nahi hai. Barah-e-karam server par ye command run karein: chmod -R 777 " . public_path('images/purchases_bills'));
+                }
+            }
+        }
 
         // Check monthly request limit (120 bills / month)
         $quota = $this->getMonthlyUsage();
