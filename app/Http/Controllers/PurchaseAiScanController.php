@@ -160,6 +160,9 @@ class PurchaseAiScanController extends Controller
      */
     public function scan(Request $request, AiBillScannerService $service)
     {
+        @set_time_limit(180);
+        @ini_set('max_execution_time', '180');
+
         $request->validate([
             'bill_file' => 'required|file|mimes:jpeg,png,jpg,webp,pdf|max:10240',
             'api_key' => 'nullable|string',

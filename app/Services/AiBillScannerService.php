@@ -108,6 +108,9 @@ class AiBillScannerService
      */
     public function scanBill(UploadedFile $file, ?string $customApiKey = null, ?int $warehouseId = null)
     {
+        @set_time_limit(180);
+        @ini_set('max_execution_time', '180');
+
         // 1. Store the uploaded bill image in public folder for preview and archiving
         $destinationPath = public_path('images/purchases_bills');
         if (! File::isDirectory($destinationPath)) {
@@ -121,40 +124,36 @@ class AiBillScannerService
         $savedFilePath = $destinationPath . DIRECTORY_SEPARATOR . $filename;
         $billUrl = '/images/purchases_bills/' . $filename;
 
-        // 2. Determine mime type
-        $mimeType = match ($extension) {
-            'png' => 'image/png',
-            'webp' => 'image/webp',
-            'pdf' => 'application/pdf',
-            default => 'image/jpeg',
-        };
-
-        $base64Data = base64_encode(file_get_contents($savedFilePath));
-
         // Check monthly request limit (120 bills / month)
         $quota = $this->getMonthlyUsage();
         if ($quota['limit_reached']) {
             throw new Exception("Is month ki AI bill scan limit ({$quota['monthly_limit']}) poori ho chuki hai. Aap is month mazeed bills scan nahi kar saktay. Aglay month quota automatically reset ho jaye ga.");
         }
 
-        // 3. Resolve API key (Prioritize OpenAI GPT)
+        // 2. Resolve API key
         $openaiKey = $this->resolveApiKey($customApiKey, 'openai');
         $geminiKey = $this->resolveApiKey($customApiKey, 'gemini');
 
         $rawJson = null;
 
-        if ($openaiKey) {
-            if ($extension === 'pdf') {
+        if ($extension === 'pdf') {
+            if ($openaiKey) {
                 $rawJson = $this->handlePdfWithOpenAI($openaiKey, $savedFilePath);
+            } elseif ($geminiKey) {
+                $rawJson = $this->callGemini($geminiKey, base64_encode(file_get_contents($savedFilePath)), 'application/pdf');
             } else {
-                $rawJson = $this->callOpenAI($openaiKey, $base64Data, $mimeType);
+                throw new Exception('OpenAI API Key missing. Please set OPENAI_API_KEY in your .env file.');
             }
-        } elseif ($geminiKey) {
-            $rawJson = $this->callGemini($geminiKey, $base64Data, $mimeType);
         } else {
-            throw new Exception(
-                'OpenAI API Key missing. Please set OPENAI_API_KEY in your .env file.'
-            );
+            // Optimize large images to prevent timeouts and reduce payload
+            $optimized = $this->optimizeImageForAi($savedFilePath, $extension);
+            if ($openaiKey) {
+                $rawJson = $this->callOpenAI($openaiKey, $optimized['base64'], $optimized['mimeType']);
+            } elseif ($geminiKey) {
+                $rawJson = $this->callGemini($geminiKey, $optimized['base64'], $optimized['mimeType']);
+            } else {
+                throw new Exception('OpenAI API Key missing. Please set OPENAI_API_KEY in your .env file.');
+            }
         }
 
         if (empty($rawJson)) {
@@ -277,6 +276,74 @@ PROMPT;
     }
 
     /**
+     * Optimize and compress large image before sending to AI to avoid timeouts.
+     */
+    protected function optimizeImageForAi(string $filePath, string $extension): array
+    {
+        $mimeType = match ($extension) {
+            'png' => 'image/png',
+            'webp' => 'image/webp',
+            default => 'image/jpeg',
+        };
+
+        if (! function_exists('imagecreatefromstring')) {
+            return [
+                'base64' => base64_encode(file_get_contents($filePath)),
+                'mimeType' => $mimeType,
+            ];
+        }
+
+        $raw = @file_get_contents($filePath);
+        if (! $raw) {
+            return [
+                'base64' => '',
+                'mimeType' => $mimeType,
+            ];
+        }
+
+        // If file is already small (< 1MB), no need to re-encode
+        if (strlen($raw) < 1048576) {
+            return [
+                'base64' => base64_encode($raw),
+                'mimeType' => $mimeType,
+            ];
+        }
+
+        $img = @imagecreatefromstring($raw);
+        if (! $img) {
+            return [
+                'base64' => base64_encode($raw),
+                'mimeType' => $mimeType,
+            ];
+        }
+
+        $origW = imagesx($img);
+        $origH = imagesy($img);
+
+        $maxDim = 1920;
+        if ($origW > $maxDim || $origH > $maxDim) {
+            $ratio = min($maxDim / $origW, $maxDim / $origH);
+            $newW = (int) round($origW * $ratio);
+            $newH = (int) round($origH * $ratio);
+
+            $resized = imagecreatetruecolor($newW, $newH);
+            imagecopyresampled($resized, $img, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
+            imagedestroy($img);
+            $img = $resized;
+        }
+
+        ob_start();
+        imagejpeg($img, null, 85);
+        $compressed = ob_get_clean();
+        imagedestroy($img);
+
+        return [
+            'base64' => base64_encode($compressed),
+            'mimeType' => 'image/jpeg',
+        ];
+    }
+
+    /**
      * Call OpenAI Vision API (gpt-4o / gpt-4o-mini).
      */
     protected function callOpenAI(string $apiKey, string $base64Data, string $mimeType): array
@@ -333,7 +400,7 @@ PROMPT;
         $model = env('OPENAI_MODEL', 'gpt-4o-mini');
 
         $response = Http::withoutVerifying()
-            ->timeout(60)
+            ->timeout(120)
             ->withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
                 'Content-Type' => 'application/json',
@@ -342,6 +409,7 @@ PROMPT;
                 'model' => $model,
                 'response_format' => ['type' => 'json_object'],
                 'temperature' => 0.1,
+                'max_tokens' => 4000,
                 'messages' => [
                     [
                         'role' => 'system',
@@ -382,31 +450,34 @@ PROMPT;
             throw new Exception("Unable to read PDF file for scanning.");
         }
 
-        // 1. Try extracting raw text from PDF streams
+        // 1. Try extracting raw text from PDF streams (works for 1-page, 3-page, any digital PDF)
         $extractedText = $this->extractTextFromPdfContent($content);
 
-        if (mb_strlen(trim($extractedText)) > 30) {
+        if (mb_strlen(trim($extractedText)) > 40) {
             return $this->callOpenAiWithText($apiKey, $extractedText);
         }
 
-        // 2. If text was minimal (e.g. scanned document), try extracting an embedded image (DCTDecode / JPEG)
-        $embeddedImage = $this->extractFirstImageFromPdfContent($content);
-        if ($embeddedImage) {
-            return $this->callOpenAI($apiKey, base64_encode($embeddedImage), 'image/jpeg');
+        // 2. If text was minimal (scanned PDF), extract all embedded images (page 1, 2, 3...)
+        $images = $this->extractAllImagesFromPdfContent($content);
+        if (! empty($images)) {
+            if (count($images) === 1) {
+                return $this->callOpenAI($apiKey, base64_encode($images[0]), 'image/jpeg');
+            }
+            return $this->callOpenAiWithMultipleImages($apiKey, $images);
         }
 
-        // 3. If Gemini key is available, fallback to Gemini which natively supports application/pdf
+        // 3. Fallback: If Gemini key is available, Gemini natively supports application/pdf
         $geminiKey = env('GEMINI_API_KEY') ?: config('services.gemini.key');
         if ($geminiKey) {
             return $this->callGemini($geminiKey, base64_encode($content), 'application/pdf');
         }
 
         // 4. If we extracted some text even if short, give it a shot with OpenAI
-        if (!empty(trim($extractedText))) {
+        if (! empty(trim($extractedText))) {
             return $this->callOpenAiWithText($apiKey, $extractedText);
         }
 
-        throw new Exception("PDF scanning: Is PDF se text ya image extract nahi ho saki. Barah-e-karam bill ki saaf picture (PNG/JPG) upload karein ya text-readable PDF dein.");
+        throw new Exception("PDF scanning: Is PDF se text ya images extract nahi ho sakein. Barah-e-karam bill ki saaf picture (PNG/JPG) upload karein ya text-readable PDF dein.");
     }
 
     /**
@@ -455,11 +526,13 @@ PROMPT;
     }
 
     /**
-     * Try extracting embedded JPEG images from PDF (/Filter /DCTDecode)
+     * Extract all embedded JPEG images from PDF (/Filter /DCTDecode), up to 5 pages.
      */
-    protected function extractFirstImageFromPdfContent(string $content): ?string
+    protected function extractAllImagesFromPdfContent(string $content): array
     {
+        $images = [];
         $offset = 0;
+
         while (($pos = strpos($content, '/DCTDecode', $offset)) !== false) {
             $streamPos = strpos($content, 'stream', $pos);
             $endstreamPos = strpos($content, 'endstream', $streamPos);
@@ -471,14 +544,121 @@ PROMPT;
                     $start += 1;
                 }
                 $imgData = substr($content, $start, $endstreamPos - $start);
-                if (str_starts_with($imgData, "\xFF\xD8\xFF")) {
-                    return $imgData;
+                // Check JPEG magic bytes: FF D8 FF and ignore tiny logos/icons (< 8KB)
+                if (str_starts_with($imgData, "\xFF\xD8\xFF") && strlen($imgData) > 8192) {
+                    $images[] = $imgData;
+                    if (count($images) >= 6) {
+                        break;
+                    }
                 }
             }
             $offset = $pos + 10;
         }
 
-        return null;
+        return $images;
+    }
+
+    /**
+     * Call OpenAI with multiple scanned page images (e.g. multi-page scanned PDF bill).
+     */
+    protected function callOpenAiWithMultipleImages(string $apiKey, array $images): array
+    {
+        $prompt = <<<PROMPT
+You are an expert purchase bill / invoice analyzer for an inventory ERP system.
+This invoice consists of multiple scanned pages. Read and extract all data across ALL pages.
+Combine all line items into one single items list.
+Return a STRICT JSON object only.
+
+The JSON schema must be exactly:
+{
+  "supplier": {
+    "name": "Vendor / Supplier Company Name",
+    "phone": "Phone number or empty string",
+    "tax_number": "Tax / NTN / VAT number or empty string",
+    "address": "Address or empty string"
+  },
+  "invoice": {
+    "ref": "Invoice / Bill / Purchase Order / Reference number",
+    "date": "Invoice Date in YYYY-MM-DD format",
+    "due_date": "Due date in YYYY-MM-DD format or empty string"
+  },
+  "items": [
+    {
+      "name": "Item description or product name",
+      "code": "Item code, barcode, SKU or empty string",
+      "quantity": 1.0,
+      "unit_cost": 0.0,
+      "discount": 0.0,
+      "tax_percent": 0.0,
+      "total": 0.0
+    }
+  ],
+  "financials": {
+    "subtotal": 0.0,
+    "tax_amount": 0.0,
+    "tax_rate": 0.0,
+    "discount": 0.0,
+    "shipping": 0.0,
+    "grand_total": 0.0,
+    "notes": "Any payment terms or notes"
+  }
+}
+
+Rules:
+1. Extract ALL line items across ALL pages. Do not skip items from page 2 or page 3.
+2. If quantity is missing, default to 1.
+3. If unit_cost is missing but total is present, calculate unit_cost = total / quantity.
+4. Date MUST be normalized to YYYY-MM-DD.
+5. All numeric values must be numbers, not strings.
+PROMPT;
+
+        $contentParts = [
+            ['type' => 'text', 'text' => $prompt],
+        ];
+
+        foreach ($images as $imgBytes) {
+            $base64 = base64_encode($imgBytes);
+            $contentParts[] = [
+                'type' => 'image_url',
+                'image_url' => ['url' => "data:image/jpeg;base64,{$base64}"],
+            ];
+        }
+
+        $model = env('OPENAI_MODEL', 'gpt-4o-mini');
+
+        $response = Http::withoutVerifying()
+            ->timeout(120)
+            ->withHeaders([
+                'Authorization' => 'Bearer ' . $apiKey,
+                'Content-Type' => 'application/json',
+            ])
+            ->post('https://api.openai.com/v1/chat/completions', [
+                'model' => $model,
+                'response_format' => ['type' => 'json_object'],
+                'temperature' => 0.1,
+                'max_tokens' => 4000,
+                'messages' => [
+                    [
+                        'role' => 'system',
+                        'content' => 'You extract purchase bills and return pure JSON conforming to the requested schema.',
+                    ],
+                    [
+                        'role' => 'user',
+                        'content' => $contentParts,
+                    ],
+                ],
+            ]);
+
+        if ($response->successful()) {
+            $json = $response->json();
+            $content = $json['choices'][0]['message']['content'] ?? '';
+            $parsed = json_decode($this->cleanJsonString($content), true);
+            if (is_array($parsed)) {
+                return $parsed;
+            }
+        }
+
+        throw new Exception('OpenAI Error: ' . ($response->json()['error']['message'] ?? $response->body()));
     }
 
     /**
@@ -542,7 +722,7 @@ PROMPT;
         $model = env('OPENAI_MODEL', 'gpt-4o-mini');
 
         $response = Http::withoutVerifying()
-            ->timeout(60)
+            ->timeout(120)
             ->withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
                 'Content-Type' => 'application/json',
@@ -551,6 +731,7 @@ PROMPT;
                 'model' => $model,
                 'response_format' => ['type' => 'json_object'],
                 'temperature' => 0.1,
+                'max_tokens' => 4000,
                 'messages' => [
                     [
                         'role' => 'system',

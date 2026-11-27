@@ -2026,6 +2026,7 @@ export default {
 
       axios.post('purchase-ai/scan', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 180000,
         meta: { skipAuthRedirect: true }
       })
       .then(({ data }) => {
