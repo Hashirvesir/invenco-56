@@ -6408,6 +6408,15 @@ class ReportController extends BaseController
             ->get()
             ->groupBy('product_id');
 
+        $variantIds = $variantsByProduct->flatten()->pluck('id')->all();
+        $avgCostMap = $this->averageCostBulk(
+            $productIds,
+            $variantIds,
+            Carbon::today()->toDateString(),
+            $warehouse_id !== 0 ? $warehouse_id : null,
+            $selectedWarehouseIds
+        );
+
         // Get stock data per warehouse
         $stockRows = product_warehouse::select(
             'product_id',
@@ -6578,7 +6587,10 @@ class ReportController extends BaseController
                         if (!$warehouse) continue;
 
                         $currentQty = (float) $whStocks->sum('qty');
-                        $costPrice = (float) $variant->cost;
+                        $kstr = $product->id . ':' . $vid;
+                        $costPrice = isset($avgCostMap[$kstr]) && $avgCostMap[$kstr] > 0
+                            ? (float) $avgCostMap[$kstr]
+                            : (float) $variant->cost;
                         $sellingPrice = (float) $variant->price;
                         
                         $stockValueCost = $currentQty * $costPrice;
@@ -6632,7 +6644,10 @@ class ReportController extends BaseController
                     if (!$warehouse) continue;
 
                     $currentQty = (float) $whStocks->sum('qty');
-                    $costPrice = (float) $product->cost;
+                    $kstr = $product->id . ':null';
+                    $costPrice = isset($avgCostMap[$kstr]) && $avgCostMap[$kstr] > 0
+                        ? (float) $avgCostMap[$kstr]
+                        : (float) $product->cost;
                     $sellingPrice = (float) $product->price;
                     
                     $stockValueCost = $currentQty * $costPrice;
