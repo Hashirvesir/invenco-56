@@ -50,7 +50,7 @@ return [
     ],
 
     'ai' => [
-        'monthly_limit' => (int) env('AI_MONTHLY_REQUEST_LIMIT', 120),
+        'monthly_limit' => (int) env('AI_MONTHLY_REQUEST_LIMIT', 250),
     ],
 
 ];

@@ -59,7 +59,7 @@
                       <div class="d-flex align-items-center">
                         <i class="i-Information text-primary mr-2" style="font-size: 1.15rem;"></i>
                         <span class="small font-weight-bold text-dark">
-                          Monthly AI Bill Limit: <strong>120 bills / month</strong>
+                          Monthly AI Bill Limit: <strong>{{ aiScan.quota ? aiScan.quota.monthly_limit : 250 }} bills / month</strong>
                         </span>
                       </div>
                       <div>
@@ -68,7 +68,7 @@
                           :class="aiScan.quota && aiScan.quota.limit_reached ? 'badge-danger' : (aiScan.quota && aiScan.quota.remaining <= 10 ? 'badge-warning' : 'badge-primary')"
                           style="font-size: 0.85rem;"
                         >
-                          Used: {{ aiScan.quota ? aiScan.quota.used : 0 }} / {{ aiScan.quota ? aiScan.quota.monthly_limit : 120 }} ({{ aiScan.quota ? aiScan.quota.remaining : 120 }} remaining)
+                          Used: {{ aiScan.quota ? aiScan.quota.used : 0 }} / {{ aiScan.quota ? aiScan.quota.monthly_limit : 250 }} ({{ aiScan.quota ? aiScan.quota.remaining : 250 }} remaining)
                         </span>
                       </div>
                     </div>
@@ -76,7 +76,7 @@
                     <!-- Limit Reached Warning -->
                     <b-alert v-if="aiScan.quota && aiScan.quota.limit_reached" variant="danger" show class="mb-3">
                       <strong><i class="i-Close-Window mr-1"></i> Monthly Limit Reached:</strong>
-                      Is month ki 120 bill scans ki limit poori ho chuki hai. Aap is month mazeed bills scan nahi kar saktay. Aglay month quota automatically reset ho jaye ga.
+                      Is month ki {{ aiScan.quota ? aiScan.quota.monthly_limit : 250 }} bill scans ki limit poori ho chuki hai. Aap is month mazeed bills scan nahi kar saktay. Aglay month quota automatically reset ho jaye ga.
                     </b-alert>
 
                     <b-row>
@@ -1197,9 +1197,9 @@ export default {
         fileType: 'image',
         result: null,
         quota: {
-          monthly_limit: 120,
+          monthly_limit: 250,
           used: 0,
-          remaining: 120,
+          remaining: 250,
           limit_reached: false
         }
       },

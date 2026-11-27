@@ -60,9 +60,9 @@ class AiBillScannerService
      */
     public function getMonthlyUsage(): array
     {
-        $monthlyLimit = (int) env('AI_MONTHLY_REQUEST_LIMIT', config('services.ai.monthly_limit', 120));
+        $monthlyLimit = (int) env('AI_MONTHLY_REQUEST_LIMIT', config('services.ai.monthly_limit', 250));
         if ($monthlyLimit <= 0) {
-            $monthlyLimit = 120;
+            $monthlyLimit = 250;
         }
 
         $monthStart = strtotime(date('Y-m-01 00:00:00'));
